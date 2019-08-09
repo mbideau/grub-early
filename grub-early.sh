@@ -96,6 +96,7 @@ GRUB_EARLY_THEME_DEFAULT=
 GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES=
 GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY=
 GRUB_EARLY_ALTERNATIVE_MENU=
+# shellcheck disable=SC2034
 GRUB_EARLY_RANDOM_BG_COLOR=
 GRUB_EARLY_INSTALL_ARGS=
 
@@ -352,12 +353,40 @@ CONFIGURATION
         with the directive \`desktop-color' set to the color.
         Then it will enable the \`RANDOM_THEME' feature.
 
+    RANDOM_BG_COLOR_NODEFAULT
+        If true, will not includ the default theme in the themes, just use it to
+        generate all colored derivatives.
+
     RANDOM_BG_IMAGE
         If true, will display a random background, according to the directory:
         \`$GRUB_BG_DIR'.
         For each background found, the main theme and inner theme will be copied
         with the directive \`desktop-image' replaced by the background file path.
         Then it will enable the \`RANDOM_THEME' feature.
+
+    DAY_TIME
+        The time in the day after which only the following variables will be
+        used instead of the "un-suffixed" ones:
+            - THEMES_DIR_DAY
+            - THEME_DEFAULT_DAY
+            - TERMINAL_BG_COLOR_DAY
+            - TERMINAL_BG_IMAGE_DAY
+            - RANDOM_BG_IMAGE_DAY
+            - RANDOM_BG_COLOR_DAY
+            - RANDOM_BG_COLOR_NODEFAULT_DAY.
+       You must specify both: DAY_TIME and NIGHT_TIME.
+
+    NIGHT_TIME
+        The time in the day after which only the following variables will be
+        used instead of the "un-suffixed" ones:
+            - THEMES_DIR_NIGHT
+            - THEME_DEFAULT_NIGHT
+            - TERMINAL_BG_COLOR_NIGHT
+            - TERMINAL_BG_IMAGE_NIGHT
+            - RANDOM_BG_IMAGE_NIGHT
+            - RANDOM_BG_COLOR_NIGHT
+            - RANDOM_BG_COLOR_NODEFAULT_NIGHT.
+       You must specify both: DAY_TIME and NIGHT_TIME.
 
     SHORT_UUID
         If true, will truncate MACHINE_UUID that identifies the host when in
@@ -464,6 +493,7 @@ PROBLEM SOLVED
 
      * support for theming (full support: timeout, progress, fonts, etc.)
        and even up to 10 random themes (enthropy based on datetime seconds)
+       and a day/night mode!
 
      * support for full grub2 scripting (by switching to normal mode ASAP)
 
@@ -771,7 +801,6 @@ ENDCAT
 #  $1  string  the theme names
 set_term_background_color()
 {
-    echo '# set terminal background color'
     t_count=0
     for t in $1; do
         t_path="$GRUB_THEMES_DIR/$t/$GRUB_THEME_FILENAME"
@@ -824,7 +853,7 @@ get_machine_uuid()
 # get a list of submenu class key/value arguments from a list of classes
 get_submenu_classes()
 {
-    echo "--class $1"|sed 's/[[:blank:]]*,[[:blank:]]*/ --class/g'
+    echo "--class $1"|sed 's/[[:blank:]]*,[[:blank:]]*/ --class /g'
 }
 
 
@@ -942,46 +971,154 @@ if [ "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" = '' ]; then
     GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBLENUS_TITLE (recovery)"
 fi
 
-# list all theme names
-ALL_THEME_NAMES=
-if [ -d "$GRUB_EARLY_THEMES_DIR" ]; then
-    ALL_THEME_NAMES="$(find "$GRUB_EARLY_THEMES_DIR" -maxdepth 1 -type d \
-                        -not -path "$GRUB_EARLY_THEMES_DIR" \
-                        -printf "%P\\n")"
-    debug "Theme names: %s" "$(printf "%s" "$ALL_THEME_NAMES"|tr '\n' ',')"
-fi
-
-# handle the THEMES_DIR and GRUB_EARLY_THEME_DEFAULT options
-if [ "$GRUB_EARLY_THEME_DEFAULT" = '' ] && [ "$ALL_THEME_NAMES" != '' ]; then
-    GRUB_EARLY_THEME_DEFAULT="$(echo "$ALL_THEME_NAMES"|head -n 1)"
-    debug "Default theme: %s" "$GRUB_EARLY_THEME_DEFAULT"
-fi
-
-# theming is enabled
-THEME_ENABLED=false
-if [ "$GRUB_EARLY_THEME_DEFAULT" != '' ] && [ "$ALL_THEME_NAMES" != '' ]; then
-    THEME_ENABLED=true
-fi
-
-# handle GRUB_EARLY_RANDOM_BG_COLOR option value
-if bool "$THEME_ENABLED" && [ "$GRUB_EARLY_RANDOM_BG_COLOR" != '' ]; then
-    if [ "$GRUB_EARLY_RANDOM_BG_COLOR" = 'generated' ]; then
-        GRUB_EARLY_RANDOM_BG_COLOR="$(generate_color_list)"
-        debug "Colors generated: %s" "$(printf "%s" "$GRUB_EARLY_RANDOM_BG_COLOR"|tr '\n' ',')"
+# day/night mode
+day_night_mode=false
+for v in %s_HOUR \
+         THEMES_DIR_%s \
+         THEME_DEFAULT_%s \
+         TERMINAL_BG_COLOR_%s \
+         TERMINAL_BG_IMAGE_%s \
+         RANDOM_BG_IMAGE_%s \
+         RANDOM_BG_COLOR_%s
+do
+    # shellcheck disable=SC2059
+    vday_name="$(printf "GRUB_EARLY_$v" "DAY")"
+    eval 'vday="$'"$vday_name"'"'
+    # shellcheck disable=SC2059
+    vnight_name="$(printf "GRUB_EARLY_$v" "NIGHT")"
+    eval 'vnight="$'"$vnight_name"'"'
+    # shellcheck disable=SC2154
+    if [ "$vday" != '' ] && [ "$vnight" = '' ] \
+    || [ "$vday" = '' ] && [ "$vnight" != '' ]; then
+        fatal_error "Both $vday_name and $vnight_name must be specified"
     fi
-    if ! check_color_list "$GRUB_EARLY_RANDOM_BG_COLOR"; then
-        fatal_error "Invalid color list for option \`%s' (%s)" \
-            'GRUB_EARLY_RANDOM_BG_COLOR' "$GRUB_EARLY_RANDOM_BG_COLOR"
+done
+for k in DAY_TIME NIGHT_TIME; do
+    eval 'v="$'"$k"'"'
+    if [ "$v" != '' ] && ! echo "$v"|trim|grep -q '^[0-9]\{2\}:[0-9]\{2\}$'; then
+        fatal_error "Invalid $k format (must be: %H:%M, i.e.: 08:00 or 21:30)"
     fi
-    GRUB_EARLY_RANDOM_THEME=true
-    debug "Enabling RANDOM_THEME"
+done
+if [ "$GRUB_EARLY_DAY_TIME" != '' ] && [ "$GRUB_EARLY_NIGHT_TIME" != '' ]; then
+    debug "Enabling Day/Night mode"
+    day_night_mode=true
+
+    GRUB_EARLY_DAY_TIME="$(echo "$GRUB_EARLY_DAY_TIME"|trim)"
+    GRUB_EARLY_NIGHT_TIME="$(echo "$GRUB_EARLY_NIGHT_TIME"|trim)"
+
+    DAY_TIME_H="$(echo "$GRUB_EARLY_DAY_TIME"|awk -F ':' '{print $1}'|sed 's/^0\([0-9]\)$/\1/g')"
+    DAY_TIME_M="$(echo "$GRUB_EARLY_DAY_TIME"|awk -F ':' '{print $2}'|sed 's/^0\([0-9]\)$/\1/g')"
+    NIGHT_TIME_H="$(echo "$GRUB_EARLY_NIGHT_TIME"|awk -F ':' '{print $1}'|sed 's/^0\([0-9]\)$/\1/g')"
+    NIGHT_TIME_M="$(echo "$GRUB_EARLY_NIGHT_TIME"|awk -F ':' '{print $2}'|sed 's/^0\([0-9]\)$/\1/g')"
 fi
 
-# handle RANDOM_BG_IMAGE option value
-if bool "$THEME_ENABLED" && [ "$RANDOM_BG_IMAGE" != '' ]; then
-    GRUB_EARLY_RANDOM_THEME=true
-    debug "Enabling RANDOM_THEME"
+# suffixes according to day/night mode or none
+var_suffixes=$FALSE
+if bool "$day_night_mode"; then
+    var_suffixes='DAY NIGHT'
 fi
+debug "var_suffixes: %s" "$var_suffixes"
+
+# process all theming related vars
+for s in $var_suffixes; do
+    var_suffix="$(if [ "$s" != "$FALSE" ]; then echo "_$s"; fi)"
+    var_text="$(  if [ "$s" != "$FALSE" ]; then echo " ($s)"; fi)"
+
+    # theming is disabled by default
+    eval 'THEME_ENABLED'"$var_suffix"'=false'
+
+    # init theme vars
+    eval 'ALL_THEME_NAMES'"$var_suffix"'='
+    eval 'd="$GRUB_EARLY_THEMES_DIR'"$var_suffix"'"'
+
+    # if the theme directory is not defined
+    if [ "$d" = '' ]; then
+        if [ "$s" != "$FALSE" ]; then
+            if [ "$GRUB_EARLY_THEMES_DIR" != '' ]; then
+                d="$GRUB_EARLY_THEMES_DIR"
+                eval 'GRUB_EARLY_THEMES_DIR'"$var_suffix"'="'"$d"'"'
+            else
+                debug "No theme directory specified"
+            fi
+        else
+            debug "No theme directory specified"
+        fi
+    fi
+
+    # if the theme directory is defined (now)
+    if [ "$d" != '' ]; then
+        if [ -d "$d" ]; then
+
+            # list all theme names
+            themes_names="$(find "$d" -maxdepth 1 -type d -not -path "$d" -printf "%P\\n")"
+            eval 'ALL_THEME_NAMES'"$var_suffix"'="$themes_names"'
+            if [ "$themes_names" = '' ]; then
+                warning "No theme found in directory '%s'" "$d"
+            else
+                debug "Theme names$var_text: %s" "$(printf "%s" "$themes_names"|tr '\n' ',')"
+
+                # handle the THEMES_DIR and GRUB_EARLY_THEME_DEFAULT options
+                eval 'theme_default="$GRUB_EARLY_THEME_DEFAULT'"$var_suffix"'"'
+                if [ "$theme_default" = '' ]; then
+                    theme_default="$(echo "$themes_names"|head -n 1)"
+                    eval 'GRUB_EARLY_THEME_DEFAULT'"$var_suffix"'="$theme_default"'
+                    debug "Default theme$var_text: %s" "$theme_default"
+                fi
+
+                # enable theming
+                eval 'THEME_ENABLED'"$var_suffix"'=true'
+                debug "Enabling theming$var_text"
+            fi
+        else
+            debug "Theme directory '%s' doesn't exist" "$d"
+        fi
+    fi
+done
+
+# when day/night mode is enabled
+if bool "$day_night_mode"; then
+
+    # theming must be enabled for both modes
+    if bool "$THEME_ENABLED_DAY" && ! bool "$THEME_ENABLED_NIGHT" \
+    || ! bool "$THEME_ENABLED_DAY" && bool "$THEME_ENABLED_NIGHT"; then
+        fatal_error "It cannot have a situation where theming is enabled at DAY time but not at NIGHT time, or the opposite"
+    else
+        THEME_ENABLED=true
+    fi
+fi
+
+# keep on processing the rest of theming related vars
+RANDOM_BG_COLOR_ENABLED=false
+for s in $var_suffixes; do
+    var_suffix="$(if [ "$s" != "$FALSE" ]; then echo "_$s"; fi)"
+    var_text="$(  if [ "$s" != "$FALSE" ]; then echo " ($s)"; fi)"
+
+    # handle GRUB_EARLY_RANDOM_BG_COLOR option value
+    eval 'random_bg_c="$GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'"'
+    if bool "$THEME_ENABLED" && [ "$random_bg_c" != '' ]; then
+        if [ "$random_bg_c" = 'generated' ]; then
+            random_bg_c="$(generate_color_list)"
+            eval 'GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'="$random_bg_c"'
+            debug "Colors generated$var_text: %s" "$(printf "%s" "$random_bg_c"|tr '\n' ',')"
+        fi
+        if ! check_color_list "$random_bg_c"; then
+            fatal_error "Invalid color list for option \`%s' (%s)" \
+                "GRUB_EARLY_RANDOM_BG_COLOR$var_suffix" "$random_bg_c"
+        fi
+        RANDOM_BG_COLOR_ENABLED=true
+    fi
+done
+
+# random theme enabling
+if ! bool "$GRUB_EARLY_RANDOM_THEME"; then
+    if bool "$RANDOM_BG_COLOR_ENABLED" \
+    || [ "$RANDOM_BG_IMAGE" != '' ]    \
+    || [ "$RANDOM_BG_IMAGE_DAY" != '' ]; then
+        GRUB_EARLY_RANDOM_THEME=true
+        debug "Enabling RANDOM_THEME"
+    fi
+fi
+
 
 # check other hosts option
 if ! check_opt_other_hosts; then
@@ -1115,7 +1252,9 @@ if bool "$multi_host_mode"; then
 
     # update variables with host dir prefix
     GRUB_THEMES_DIR=${GRUB_MEMDISK_DIR}${host_prefix}/themes
+    # TODO makes the backgrounds specific to the theme
     GRUB_BG_DIR=${GRUB_MEMDISK_DIR}${host_prefix}/backgrounds
+    # TODO makes the image specific to the theme
     GRUB_TERMINAL_BG_IMAGE=${GRUB_MEMDISK_DIR}${host_prefix}/terminal_background.tga
 fi
 
@@ -1150,49 +1289,82 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     cp "$GRUB_PREFIX/share/grub/$GRUB_EARLY_FONT.pf2" "$font_dest"
 
     # ensure theme is up to date
-    if bool "$THEME_ENABLED" && [ -d "$GRUB_EARLY_THEMES_DIR" ]; then
+    if bool "$THEME_ENABLED"; then
+
         info "Deleting themes dir '%s'" "$GRUB_THEMES_DIR"
         rm -fr "$GRUB_THEMES_DIR"
 
-        # no random background color
-        if [ "$GRUB_EARLY_RANDOM_BG_COLOR" = '' ]; then
-            info "Copying themes dir '%s' to '%s'" "$GRUB_EARLY_THEMES_DIR" "$GRUB_THEMES_DIR"
-            cp -r "$GRUB_EARLY_THEMES_DIR" "$GRUB_THEMES_DIR"
+        debug "Creating theme dir '%s'" "$GRUB_THEMES_DIR"
+        mkdir -p "$GRUB_THEMES_DIR"
 
-        # random background color
-        else
-            debug "Creating theme dir '%s'" "$GRUB_THEMES_DIR"
-            mkdir -p "$GRUB_THEMES_DIR"
+        # processing themes in normal mode or day/night mode
+        for s in $var_suffixes; do
+            var_suffix="$(if [ "$s" != "$FALSE" ]; then echo "_$s"; fi)"
+            var_text="$(  if [ "$s" != "$FALSE" ]; then echo " ($s)"; fi)"
 
-            # copy default (first) theme
-            info "Copying default theme '%s' to '%s'" "$GRUB_EARLY_THEMES_DIR/$GRUB_EARLY_THEME_DEFAULT" "$GRUB_THEMES_DIR/"
-            cp -r "$GRUB_EARLY_THEMES_DIR/$GRUB_EARLY_THEME_DEFAULT" "$GRUB_THEMES_DIR/"
+            # theme dir source
+            eval 'theme_dir_src="$GRUB_EARLY_THEMES_DIR'"$var_suffix"'"'
 
-            # update theme names
-            ALL_THEME_NAMES="$GRUB_EARLY_THEME_DEFAULT"
+            # no random background color
+            eval 'random_bg_color="$GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'"'
+            # shellcheck disable=SC2154
+            if [ "$random_bg_color" = '' ]; then
+                info "Copying themes dir$var_text '%s' to '%s'" "$theme_dir_src/*" "$GRUB_THEMES_DIR/"
+                cp -r "$theme_dir_src"/* "$GRUB_THEMES_DIR"/
 
-            # generate derivative from it with the background color changed
-            info "Generating random background theme derivatives ..."
-            for c in $GRUB_EARLY_RANDOM_BG_COLOR; do
-                t_name="$(echo "$c"|sed 's/^#/'"$GRUB_EARLY_THEME_DEFAULT"'_/')"
-                t_path="$GRUB_THEMES_DIR/$t_name"
-                debug " - %s" "$t_name"
-                cp -r "$GRUB_THEMES_DIR/$GRUB_EARLY_THEME_DEFAULT" "$t_path"
-                sed_cmd='s/^[[:blank:]]*#\?\([[:blank:]]*desktop-color[[:blank:]]*:[[:blank:]]*\)"[^"]\+"/\1"'"$c"'"/g'
-                sed "$sed_cmd" -i "$t_path/$GRUB_THEME_FILENAME"
-                if [ -w "$t_path/$GRUB_THEME_INNER_FILENAME" ]; then
-                    sed "$sed_cmd" -i "$t_path/$GRUB_THEME_INNER_FILENAME"
+            # random background color
+            else
+
+                # default theme
+                eval 'default_theme="$GRUB_EARLY_THEME_DEFAULT'"$var_suffix"'"'
+
+                # if default theme should be included
+                eval 'nodefault="$GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT'"$var_suffix"'"'
+                if [ "$nodefault" = '' ] || ! bool "$nodefault"; then
+
+                    # copy default (first) theme
+                    if [ ! -d "$GRUB_THEMES_DIR/$default_theme" ]; then
+                        info "Copying default theme$var_text '%s' to '%s'" "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
+                        cp -r "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
+                    fi
+
+                    # update theme names
+                    eval 'ALL_THEME_NAMES'"$var_suffix"'="$default_theme"'
+
+                else
+                    debug "Default theme$var_text '%s' is excluded by user demand (%s)" "$default_theme" "GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT$var_suffix"
+
+                    # update theme names
+                    eval 'ALL_THEME_NAMES'"$var_suffix"'='
                 fi
-                ALL_THEME_NAMES="$ALL_THEME_NAMES $t_name"
-            done
-        fi
+
+                # generate derivative from the default theme with the background color changed
+                info "Generating random background theme derivatives$var_text ..."
+                for c in $random_bg_color; do
+                    t_name="$(echo "$c"|sed 's/^#/'"$default_theme"'_/')"
+                    t_path="$GRUB_THEMES_DIR/$t_name"
+                    debug " - %s" "$t_name"
+                    cp -r "$theme_dir_src/$default_theme" "$t_path"
+                    sed_cmd='s/^[[:blank:]]*#\?\([[:blank:]]*desktop-color[[:blank:]]*:[[:blank:]]*\)"[^"]\+"/\1"'"$c"'"/g'
+                    sed "$sed_cmd" -i "$t_path/$GRUB_THEME_FILENAME"
+                    if [ -w "$t_path/$GRUB_THEME_INNER_FILENAME" ]; then
+                        sed "$sed_cmd" -i "$t_path/$GRUB_THEME_INNER_FILENAME"
+                    fi
+                    eval 'ALL_THEME_NAMES'"$var_suffix"'="$ALL_THEME_NAMES'"$var_suffix"' $t_name"'
+                done
+
+                debug "Theme names$var_text updated: %s" "$(eval 'echo "$ALL_THEME_NAMES'"$var_suffix"'"')"
+            fi
+        done
     fi
 
-    # ensure terminal background image is up to date
-    if bool "$THEME_ENABLED" && [ -f "$GRUB_EARLY_TERMINAL_BG_IMAGE" ]; then
-        info "Copying terminal background image dir '%s' to '%s'" "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
-        cp "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
-    fi
+    # TODO implement day/night mode with suffixes like above
+    # TODO makes the image specific to the theme
+#     # ensure terminal background image is up to date
+#     if bool "$THEME_ENABLED" && [ -f "$GRUB_EARLY_TERMINAL_BG_IMAGE" ]; then
+#         info "Copying terminal background image dir '%s' to '%s'" "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
+#         cp "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
+#     fi
 fi
 
 # detect all initramfs and kernel
@@ -1376,6 +1548,68 @@ ENDCAT
     fi
 
 
+    # day/night mode
+    if bool "$day_night_mode"; then
+        cat >> "$GRUB_NORMAL_CFG" <<ENDCAT
+
+### day/night mode calculations ###
+
+# day time by default
+set day_night_mode=day
+
+# below are all night mode cases
+
+# current hour is greater than the DAY hour
+# and current hour is equals to the NIGHT hour
+# and current minutes are greater/equals to the NIGHT minutes
+if  [ "\$HOUR" -gt "$DAY_TIME_H" -a "\$HOUR" -eq "$NIGHT_TIME_H" -a "\$MINUTE" -ge "$NIGHT_TIME_M" ]; then
+    day_night_mode=night
+
+# current hour is lower than the DAY hour
+elif [ "\$HOUR" -lt "$DAY_TIME_H" ]; then
+
+    # current hour is not equals to the NIGHT hour
+    # or the current minutes are greater than/equals to the NIGHT minutes
+    if [ "\$HOUR" -ne "$NIGHT_TIME_H" -o "\$MINUTE" -ge "$NIGHT_TIME_M" ]; then
+        day_night_mode=night
+    fi
+
+# current hour is equals to the DAY hour
+else
+
+    # current minutes are lower than the DAY minutes
+    if [ "\$MINUTE" -lt "$DAY_TIME_M" ]; then
+
+        # current hour is not equals to the NIGHT hour
+        # or current minutes are greate than/equals to the NIGHT minutes
+        # or DAY minutes are lower than/equals to the NIGHT minutes
+        if [ "\$HOUR" -ne "$NIGHT_TIME_H" -o "\$MINUTE" -ge "$NIGHT_TIME_M" -o "$DAY_TIME_M" -le "$NIGHT_TIME_M" ]; then
+            day_night_mode=night
+        fi
+
+    # current minutes are greater than the DAY minutes
+    # and current hour is equals to NIGHT hour
+    elif [ "\$MINUTE" -gt "$DAY_TIME_M" -a "\$HOUR" -eq "$NIGHT_TIME_H" ]; then
+
+        # current minutes are greate than the NIGHT minutes
+        # and DAY minutes are lower than the NIGHT minutes
+        if [ "\$MINUTE" -gt "$NIGHT_TIME_M" -a "$DAY_TIME_M" -lt "$NIGHT_TIME_M" ]; then
+            day_night_mode=night
+
+        # current minutes are equals to the NIGHT minutes
+        elif [ "\$MINUTE" -eq "$NIGHT_TIME_M" ]; then
+            day_night_mode=night
+        fi
+    fi
+fi
+
+# export the resulting mode
+export day_night_mode
+
+### end of day/night mode calculations ###
+ENDCAT
+    fi
+
     # path are not prefixed
     h_prefix=
 
@@ -1486,24 +1720,33 @@ ENDCAT
         fi
 
         # theme definition
-        if bool "$THEME_ENABLED" && [ "$GRUB_EARLY_THEMES_DIR" != "" ]; then
+        if bool "$THEME_ENABLED"; then
 
-            # set default theme name
-            cat >> "$conf_host_path" <<ENDCAT
+            # not in day/night mode
+            if ! bool "$day_night_mode"; then
+
+                # not in random theme
+                if ! bool "$GRUB_EARLY_RANDOM_THEME"; then
+
+                    # set default theme name
+                    cat >> "$conf_host_path" <<ENDCAT
 
 # define theme name
 set theme_name=$GRUB_EARLY_THEME_DEFAULT
 ENDCAT
-            # inject random theme selection instructions (if enabled)
-            if bool "$GRUB_EARLY_RANDOM_THEME" && [ "$ALL_THEME_NAMES" != '' ]; then
-                cat >> "$conf_host_path" <<ENDCAT
+
+                # random theme
+                else
+
+                    # inject random theme selection instructions (if enabled)
+                    cat >> "$conf_host_path" <<ENDCAT
 
 $(select_random_theme "$ALL_THEME_NAMES")
 ENDCAT
-            fi
+                fi
 
-            # export theme name and set the theme (path)
-            cat >> "$conf_host_path" <<ENDCAT
+                # export theme name and set the theme (path)
+                cat >> "$conf_host_path" <<ENDCAT
 
 # export the theme name
 export theme_name
@@ -1511,6 +1754,51 @@ export theme_name
 # define theme path (not enabled yet)
 set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
 ENDCAT
+
+            # day/night mode
+            else
+
+                # not in random theme
+                if ! bool "$GRUB_EARLY_RANDOM_THEME"; then
+
+                    # set default theme name
+                    cat >> "$conf_host_path" <<ENDCAT
+
+# define theme name
+if [ "\$day_night_mode" = "day" ]; then
+    set theme_name=$GRUB_EARLY_THEME_DEFAULT_DAY
+else
+    set theme_name=$GRUB_EARLY_THEME_DEFAULT_NIGHT
+fi
+ENDCAT
+
+                # in random theme
+                else
+
+                    # inject random theme selection instructions (if enabled)
+                    cat >> "$conf_host_path" <<ENDCAT
+
+# select random theme name
+if [ "\$day_night_mode" = "day" ]; then
+
+    $(select_random_theme "$ALL_THEME_NAMES_DAY"|indent 4)
+else
+    $(select_random_theme "$ALL_THEME_NAMES_NIGHT"|indent 4)
+fi
+ENDCAT
+                fi
+
+                # export theme name and set the theme (path)
+                cat >> "$conf_host_path" <<ENDCAT
+
+# export the theme name
+export theme_name
+
+# define theme path (not enabled yet)
+set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
+ENDCAT
+
+            fi
         fi
 
         # gfxmode definition
@@ -1538,28 +1826,73 @@ ENDCAT
 terminal_output gfxterm
 ENDCAT
 
-        # background color definition
-        if [ "$GRUB_EARLY_TERMINAL_BG_COLOR" != "" ]; then
-            cat >> "$conf_host_path" <<ENDCAT
+        # not in day/night mode
+        if ! bool "$day_night_mode"; then
+
+            # background color definition
+            if [ "$GRUB_EARLY_TERMINAL_BG_COLOR" != "" ]; then
+                cat >> "$conf_host_path" <<ENDCAT
 
 # set terminal background color
 background_color "$GRUB_EARLY_TERMINAL_BG_COLOR"
 ENDCAT
-        # random bg color
-        elif [ "$GRUB_EARLY_RANDOM_BG_COLOR" != '' ]; then
-            cat >> "$conf_host_path" <<ENDCAT
+            # no background color defined
+            else
+                cat >> "$conf_host_path" <<ENDCAT
 
+# set terminal background color
 $(set_term_background_color "$ALL_THEME_NAMES")
 ENDCAT
-        fi
+            fi
 
-        # background image definition
-        if [ "$GRUB_EARLY_TERMINAL_BG_IMAGE" != "" ]; then
-            cat >> "$conf_host_path" <<ENDCAT
+            # background image definition
+            if [ "$GRUB_EARLY_TERMINAL_BG_IMAGE" != "" ]; then
+                cat >> "$conf_host_path" <<ENDCAT
 
 # set terminal background image
 background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE")
 ENDCAT
+            fi
+
+        # day/night mode
+        else
+
+            # background color definition
+            if [ "$GRUB_EARLY_TERMINAL_BG_COLOR_DAY" != "" ]; then
+                cat >> "$conf_host_path" <<ENDCAT
+
+# set terminal background color
+if [ "\$day_night_mode" = "day" ]; then
+    background_color "$GRUB_EARLY_TERMINAL_BG_COLOR_DAY"
+else
+    background_color "$GRUB_EARLY_TERMINAL_BG_COLOR_NIGHT"
+fi
+ENDCAT
+            # no background color defined
+            else
+                cat >> "$conf_host_path" <<ENDCAT
+
+# set terminal background color
+if [ "\$day_night_mode" = "day" ]; then
+    $(set_term_background_color "$ALL_THEME_NAMES_DAY"|indent 4)
+else
+    $(set_term_background_color "$ALL_THEME_NAMES_NIGHT"|indent 4)
+fi
+ENDCAT
+            fi
+
+            # background image definition
+            if [ "$GRUB_EARLY_TERMINAL_BG_IMAGE_DAY" != "" ]; then
+                cat >> "$conf_host_path" <<ENDCAT
+
+# set terminal background image
+if [ "\$day_night_mode" = "day" ]; then
+    background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE_DAY")
+else
+    background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE_NIGHT")
+fi
+ENDCAT
+            fi
         fi
 
         # define submenu helper functions
@@ -1766,6 +2099,7 @@ modules_memdisk='memdisk tar'
 modules_kbd=$(if ! bool "$GRUB_EARLY_NO_ALTERNATIVE_INPUT"; then echo 'at_keyboard'; fi)
 #modules_usb='fat exfat usb'
 modules_menu="$(if ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo 'gfxterm_menu gfxmenu'; fi)"
+# TODO get modules for each theme available (by parsing them)
 modules_theme="$GRUB_EARLY_THEMES_MODULES"
 modules="$modules_crypto $modules_disk $modules_fs $modules_memdisk $modules_kbd $modules_menu $modules_theme"
 debug "Modules defined by hand"
@@ -1789,6 +2123,7 @@ fi
 
 # create memory disk image
 info "Creating memdisk '%s' from '%s'" "$GRUB_CORE_MEMDISK" "$GRUB_MEMDISK_DIR"
+# TODO explicitly derefence links?
 tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
 
 
