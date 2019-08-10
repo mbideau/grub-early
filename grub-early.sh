@@ -2223,27 +2223,43 @@ conf_files="$conf_files${NL}$GRUB_CORE_CFG"
 
 # build the modules list
 debug "Building modules list for the current host ..."
-debug "   - config files (to parse): %s" \
-    "$(echo "$conf_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim|tr '\n' ' '|trim)"
+
+# modules for shell commands
+debug " - config files (to parse): %s" \
+    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)\\?/##g"|trim|tr '\n' ' '|trim)"
 # shellcheck disable=SC2086,SC2046
 modules_cmd="$(for cmd in $(get_command_list "$conf_files"); do get_grub_cmd_modules "$cmd"; done|uniquify)"
-debug "   - modules required by commands: %s" "$modules_cmd"
+debug " - modules required by commands: %s" "$modules_cmd"
+
+# devices
 modules_crypto="$($GRUB_PROBE -t abstraction /boot|sort -u|tr '\n' ' '|trim)"
 modules_disk="biosdisk $($GRUB_PROBE -t partmap /boot|sort -u|sed 's/^/part_/g'|tr '\n' ' '|trim)"
 #modules_fs="$($GRUB_PROBE -t fs /boot|sort -u|tr '\n' ' '|trim)"
 modules_fs=
 #modules_usb='fat exfat usb'
-modules_gfxmenu="$(if echo " $modules_cmd "|grep -q ' gfxterm '; then echo 'gfxterm_menu gfxmenu'; fi)"
-# shellcheck disable=SC2046
-modules_theme="$(get_modules_from_theme_files \
-    "$(find "$GRUB_THEMES_DIR" \( -name "$GRUB_THEME_FILENAME" -o -name "$GRUB_THEME_INNER_FILENAME" \) -printf "%p$NL")" \
-)"
-debug "   - modules required by themes: %s" "$modules_theme"
-modules="$modules_crypto $modules_disk $modules_fs $modules_gfxmenu"
-debug "   - modules required by devices: %s" "$modules"
-modules="$(echo "$modules $modules_cmd $modules_theme"|uniquify)"
-debug "   - modules (all merged): %s" "$modules"
+modules="$modules_crypto $modules_disk $modules_fs"
+debug " - modules required by devices: %s" "$modules"
 
+# modules for gfx menus
+modules_gfxmenu="$(if echo " $modules_cmd "|grep -q ' gfxterm '; then echo 'gfxterm_menu gfxmenu'; fi)"
+if [ "$modules_gfxmenu" != '' ]; then
+    debug " - modules required by gfx menus: %s" "$modules_gfxmenu"
+fi
+
+# modules for themes
+modules_theme=
+if bool "$THEME_ENABLED"; then
+    modules_theme="$(get_modules_from_theme_files \
+        "$(find "$GRUB_THEMES_DIR" \( -name "$GRUB_THEME_FILENAME" -o -name "$GRUB_THEME_INNER_FILENAME" \) -printf "%p$NL")" \
+    )"
+    debug " - modules required by themes: %s" "$modules_theme"
+fi
+
+# modules all merged
+modules="$(echo "$modules $modules_cmd $modules_theme"|uniquify)"
+debug " - modules (all merged): %s" "$modules"
+
+# requirements file
 r_file="$GRUB_MEMDISK_DIR${host_prefix}/$GRUB_EARLY_REQUIREMENTS_FILENAME"
 info "Creating requirements file '%s'" "$r_file"
 echo "$modules"|tr ' ' '\n' > "$r_file"
@@ -2251,7 +2267,7 @@ echo "$modules"|tr ' ' '\n' > "$r_file"
 # in multi-host mode
 if bool "$multi_host_mode"; then
 
-    # include modules required by other hosts
+    # modules required by other hosts
     if bool "$GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS" && [ "$other_hosts_requirements_files" != '' ]; then
         debug "Getting other hosts modules from requirements files: %s" \
             "$( echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim)"
