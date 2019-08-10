@@ -1326,7 +1326,7 @@ if bool "$multi_host_mode"; then
 
             # extract the files
             tmparc="$(mktemp -d)"
-            debug "    extracting '%s' to '%s'" "$other_host_archive" "$tmparc"
+            debug "     extracting '%s' to '%s'" "$other_host_archive" "$tmparc"
             tar -xf "$other_host_archive" -C "$tmparc"
 
             # for every required file
@@ -1344,21 +1344,21 @@ if bool "$multi_host_mode"; then
 
             # remove existing host dir
             if [ -d "$GRUB_MEMDISK_DIR"/"$other_host_id" ] && [ "$GRUB_MEMDISK_DIR/$other_host_id" != '/' ]; then
-                debug "    removing current host dir '%s'" "$GRUB_MEMDISK_DIR/$other_host_id"
+                debug "     removing current host dir '%s'" "$GRUB_MEMDISK_DIR/$other_host_id"
                 # shellcheck disable=SC2115
                 rm -fr "$GRUB_MEMDISK_DIR"/"$other_host_id"
             fi
 
             # move the files to the memdisk dir
             if [ -d "$tmparc" ]; then
-                debug "    moving '%s' to '%s'" "$tmparc" "$GRUB_MEMDISK_DIR/$other_host_id"
+                debug "     moving '%s' to '%s'" "$tmparc" "$GRUB_MEMDISK_DIR/$other_host_id"
                 mv "$tmparc" "$GRUB_MEMDISK_DIR"/"$other_host_id"
             fi
 
             # if a requirement file is present, add it to the list
             r_file="$GRUB_MEMDISK_DIR/$other_host_id/$GRUB_EARLY_REQUIREMENTS_FILENAME"
             if [ -f "$r_file" ]; then
-                debug "   adding requirement file '%s' to the list" "$r_file"
+                debug "     adding requirement file '%s' to the list" "$r_file"
                 other_hosts_requirements_files="$other_hosts_requirements_files${NL}$r_file"
             fi
         done
@@ -1584,11 +1584,12 @@ submenu_gfxmode"
 terminal_input at_keyboard"
     fi
 
+    
     # shellcheck disable=SC2030,SC2031
-    GRUB_MENY_ENTRY_KERNELS="
-    # menu wrapper for host kernel entries
-    submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' $(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
-        $(echo "$GRUB_SUBMENU_GFXCONF"|indent 8)
+    GRUB_MENUS_ENTRIES_KERNELS="
+# menu wrapper for host kernel entries
+submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' $(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 8)
 
 $(for k in $kernels; do
     # shellcheck disable=SC2059
@@ -1596,40 +1597,40 @@ $(for k in $kernels; do
     # shellcheck disable=SC2059
     k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" "$k")"
     cat <<ENDCAT
-        # kernel menu entries
-        menuentry '$k_title' $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {
-            #set color_normal=light-gray/black
-            #set color_highlight=dark-gray/black
+    # kernel menu entries
+    menuentry '$k_title' $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {
+        #set color_normal=light-gray/black
+        #set color_highlight=dark-gray/black
 
-            $(for uuid in $boot_required_uuid; do
-            echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
-            echo 'msg';
-            done|indent 12)
+        $(for uuid in $boot_required_uuid; do
+        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
+        echo 'msg';
+        done|indent 12)
 
-            search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-            msg 'Loading Linux $k ...'
-            linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
-            msg 'Loading intial ram disk ...'
-            initrd /boot/initrd.img-$k
-        }
-        menuentry '$k_title_rec' --class recovery $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {
-            #set color_normal=light-gray/black
-            #set color_highlight=dark-gray/black
+        search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+        msg 'Loading Linux $k ...'
+        linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
+        msg 'Loading intial ram disk ...'
+        initrd /boot/initrd.img-$k
+    }
+    menuentry '$k_title_rec' --class recovery $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {
+        #set color_normal=light-gray/black
+        #set color_highlight=dark-gray/black
 
-            $(for uuid in $boot_required_uuid; do
-            echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
-            echo 'msg';
-            done|indent 12)
+        $(for uuid in $boot_required_uuid; do
+        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
+        echo 'msg';
+        done|indent 12)
 
-            search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-            msg 'Loading Linux $k ...'
-            linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro single
-            msg 'Loading intial ram disk ...'
-            initrd /boot/initrd.img-$k
-        }
+        search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+        msg 'Loading Linux $k ...'
+        linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro single
+        msg 'Loading intial ram disk ...'
+        initrd /boot/initrd.img-$k
+    }
 ENDCAT
 done)
-    }
+}
 "
 
     # create a configuration file with menuentry (for normal mode)
@@ -1968,8 +1969,8 @@ ENDCAT
 # set terminal background color
 background_color "$GRUB_EARLY_TERMINAL_BG_COLOR"
 ENDCAT
-            # no background color defined
-            else
+            # no background color defined, but theming enabled
+            elif bool "$THEME_ENABLED"; then
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
@@ -2000,8 +2001,8 @@ else
     background_color "$GRUB_EARLY_TERMINAL_BG_COLOR_NIGHT"
 fi
 ENDCAT
-            # no background color defined
-            else
+            # no background color defined, but theming enabled
+            elif bool "$THEME_ENABLED"; then
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
@@ -2166,7 +2167,7 @@ ENDCAT
     fi
 
     # host kernel menu
-    echo "$GRUB_MENY_ENTRY_KERNELS" >> "$menus_host_path"
+    echo "$GRUB_MENUS_ENTRIES_KERNELS" >> "$menus_host_path"
 
     # in multi-host mode
     if bool "$multi_host_mode"; then
@@ -2226,7 +2227,7 @@ debug "Building modules list for the current host ..."
 
 # modules for shell commands
 debug " - config files (to parse): %s" \
-    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)\\?/##g"|trim|tr '\n' ' '|trim)"
+    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g"|trim|tr '\n' ' '|trim)"
 # shellcheck disable=SC2086,SC2046
 modules_cmd="$(for cmd in $(get_command_list "$conf_files"); do get_grub_cmd_modules "$cmd"; done|uniquify)"
 debug " - modules required by commands: %s" "$modules_cmd"
@@ -2270,7 +2271,7 @@ if bool "$multi_host_mode"; then
     # modules required by other hosts
     if bool "$GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS" && [ "$other_hosts_requirements_files" != '' ]; then
         debug "Getting other hosts modules from requirements files: %s" \
-            "$( echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim)"
+            "$(echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim|tr '\n' ' '|trim)"
         other_hosts_modules="$(
             IFS="$NL"; for f in $other_hosts_requirements_files; do IFS="$IFS_BAK"; cat -s "$f"|tr '\n' ' '; done|uniquify)"
         if [ "$other_hosts_modules" != '' ]; then
