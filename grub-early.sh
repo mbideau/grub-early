@@ -1023,7 +1023,10 @@ debug "Sourcing configuration '%s'" "$config"
 # shellcheck disable=SC1090
 . "$config"
 
-# ensure binaries are found
+# ensure binaries are found, and their version matches
+b_version=
+b_last_vers=
+b_last_bin=
 for bin in \
     "$GRUB_KBDCOMP" \
     "$GRUB_MKIMAGE" \
@@ -1032,6 +1035,15 @@ for bin in \
 do
     if [ ! -x "$bin" ]; then
         fatal_error "binary '%s' not found (at path: '%s')" "$(basename "$bin")" "$bin"
+    fi
+    b_version="$("$bin" --version|awk '{print $3}')"
+    if [ "$b_version" != '' ]; then
+        if [ "$b_last_vers" != '' ] && [ "$b_version" != "$b_last_vers" ]; then
+            fatal_error "grub binaries version differ: %s (%s) != %s (%s)" \
+                "$b_version" "$bin" "$b_last_vers" "$b_last_bin"
+        fi
+        b_last_vers="$b_version"
+        b_last_bin="$bin"
     fi
 done
 
@@ -1416,10 +1428,10 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     # ensure theme is up to date
     if bool "$THEME_ENABLED"; then
 
-        info "Deleting themes dir '%s'" "$GRUB_THEMES_DIR"
+        debug "Deleting themes dir '%s'" "$GRUB_THEMES_DIR"
         rm -fr "$GRUB_THEMES_DIR"
 
-        debug "Creating theme dir '%s'" "$GRUB_THEMES_DIR"
+        info "Creating theme dir '%s'" "$GRUB_THEMES_DIR"
         mkdir -p "$GRUB_THEMES_DIR"
 
         # processing themes in normal mode or day/night mode
@@ -2225,21 +2237,20 @@ conf_files="$conf_files${NL}$GRUB_CORE_CFG"
 # build the modules list
 debug "Building modules list for the current host ..."
 
+# devices
+modules_crypto="$($GRUB_PROBE -t abstraction /boot|sort -u|tr '\n' ' '|trim)"
+modules_disk="biosdisk $($GRUB_PROBE -t partmap /boot|sort -u|sed 's/^/part_/g'|tr '\n' ' '|trim)"
+modules_fs="$($GRUB_PROBE -t fs /boot|sort -u|tr '\n' ' '|trim)"
+#modules_usb='fat exfat usb'
+modules_devices="$modules_crypto $modules_disk $modules_fs"
+debug " - modules required by devices: %s" "$modules_devices"
+
 # modules for shell commands
 debug " - config files (to parse): %s" \
     "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g"|trim|tr '\n' ' '|trim)"
 # shellcheck disable=SC2086,SC2046
 modules_cmd="$(for cmd in $(get_command_list "$conf_files"); do get_grub_cmd_modules "$cmd"; done|uniquify)"
 debug " - modules required by commands: %s" "$modules_cmd"
-
-# devices
-modules_crypto="$($GRUB_PROBE -t abstraction /boot|sort -u|tr '\n' ' '|trim)"
-modules_disk="biosdisk $($GRUB_PROBE -t partmap /boot|sort -u|sed 's/^/part_/g'|tr '\n' ' '|trim)"
-#modules_fs="$($GRUB_PROBE -t fs /boot|sort -u|tr '\n' ' '|trim)"
-modules_fs=
-#modules_usb='fat exfat usb'
-modules="$modules_crypto $modules_disk $modules_fs"
-debug " - modules required by devices: %s" "$modules"
 
 # modules for gfx menus
 modules_gfxmenu="$(if echo " $modules_cmd "|grep -q ' gfxterm '; then echo 'gfxterm_menu gfxmenu'; fi)"
@@ -2257,7 +2268,7 @@ if bool "$THEME_ENABLED"; then
 fi
 
 # modules all merged
-modules="$(echo "$modules $modules_cmd $modules_theme"|uniquify)"
+modules="$(echo "$modules_devices $modules_cmd $modules_gfxmenu $modules_theme"|uniquify)"
 debug " - modules (all merged): %s" "$modules"
 
 # requirements file
@@ -2307,6 +2318,7 @@ info "Creating core image '%s' ..." "$GRUB_CORE_IMG"
 debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' --format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' --config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' ..modules.."
 # shellcheck disable=SC2086
 "$GRUB_MKIMAGE" --directory "$GRUB_MODDIR" --output "$GRUB_CORE_IMG" --format "$GRUB_CORE_FORMAT" --compression "$GRUB_CORE_COMPRESSION" --config "$GRUB_CORE_CFG" --memdisk "$GRUB_CORE_MEMDISK" $modules
+debug "Core image size: %s (max is: %s)" "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
 
 # ensure 'boot.img' is installed in grub directory
 if [ ! -f "$GRUB_BOOT_IMG" ]; then
