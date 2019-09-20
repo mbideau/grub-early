@@ -32,6 +32,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
+# TODO allow to specify a UUID instead of the device to prevent installaing grub
+#      to random device if their order have changed at reboot time (happens with SATA).
+
+# TODO allow to not use menus
+# TODO allow to force booting a specific kernel, only
+
 
 # halt on first error
 set -e
@@ -87,19 +93,6 @@ GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
 GRUB_EARLY_KERNEL_SUBLENUS_TITLE='GNU/Linux %s'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_REQUIREMENTS_FILENAME=requirements.txt
-
-# set empty var that are optional
-# and only defined in configuration
-# (preventing environment injection)
-GRUB_EARLY_VERBOSITY=
-GRUB_EARLY_CRYPTOMOUNT_OPTS=
-GRUB_EARLY_THEME_DEFAULT=
-GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES=
-GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY=
-GRUB_EARLY_ALTERNATIVE_MENU=
-# shellcheck disable=SC2034
-GRUB_EARLY_RANDOM_BG_COLOR=
-GRUB_EARLY_INSTALL_ARGS=
 
 # internal const
 NL="
@@ -266,12 +259,23 @@ CONFIGURATION
     KEYMAP
         A keyboard layout name (i.e.: fr). Default to: \`$GRUB_EARLY_KEYMAP'.
 
-    NO_ALTERNATIVE_INPUT
+    NO_USB_KEYBOARD
+        If true, disable using the alternative terminal input \`usb_keyboard'.
+        Note: When keymap is specified, one of the alternative terminal input
+        \`usb_keyboard' or \`at_keyboard' is required, because the \`console' one
+        doesn't handle keymap.
+
+    NO_PS2_KEYBOARD
         If true, disable using the alternative terminal input \`at_keyboard'.
-        When keymap is specified, we need to use the alternative terminal input
-        \`at_keyboard' because the \`console' one doesn't handle keymap.
-        This may cause various trouble, like bad support of status key, so this
-        option prevent using it.
+        Note: When keymap is specified, one of the alternative terminal input
+        \`usb_keyboard' or \`at_keyboard' is required, because the \`console' one
+        doesn't handle keymap.
+
+    FORCE_USB_KEYBOARD
+        If true, force the use of the alternative terminal input \`usb_keyboard'.
+
+    FORCE_PS2_KEYBOARD
+        If true, force the use of the alternative terminal input \`at_keyboard'.
 
     LOCALE
         A locale name (i.e.: fr_FR). Default to: \`$GRUB_EARLY_LOCALE'.
@@ -393,6 +397,11 @@ CONFIGURATION
         If true, will truncate MACHINE_UUID that identifies the host when in
         multi-hosts mode. It will truncate at the first underscore '_', then
         will use the first 16 characters.
+
+    ADD_GRUB_MODULES
+        A space separated list of grub modules that need to be added (copied)
+        to the modules directory (to be avaible at boot time with command
+        \`insmod').
 
     INSTALL_ARGS
         Extra arguments to pass to \`grub-bios-setup'.
@@ -587,10 +596,10 @@ ENDCAT
 #  ..  string   a nth replacement string in the message
 fatal_error()
 {
-    _msg="Fatal error: $1\\n"
+    _msg="$1\\n"
     shift
     # shellcheck disable=SC2059
-    printf "$_msg" "$@" >&2
+    printf "$_msg" "$@"|sed 's/^/Fatal error: /g' >&2
     exit 1
 }
 
@@ -601,10 +610,10 @@ fatal_error()
 #  ..  string   a nth replacement string in the message
 warning()
 {
-    _msg="Warning: $1\\n"
+    _msg="$1\\n"
     shift
     # shellcheck disable=SC2059
-    printf "$_msg" "$@" >&2
+    printf "$_msg" "$@"|sed 's/^/Warning: /g' >&2
 }
 
 # display a message according to $VERBOSITY level (0 = quiet)
@@ -673,10 +682,25 @@ indent()
     sed ":a;N;\$!ba;s/\\n/\\n$_spaces/g"
 }
 
-# uniquify a string list separated by spaces
+# trim and uniquify a words list from stdin (line separated)
+# options are:
+#   --from-sep-space : words are separated by space (not line)
+#   --to-sep-space   : words are outputed separated by space (not line)
+#   -s|--space       : equals both options --from-sep-space and --to-sep-space
 uniquify()
 {
-    tr ' ' '\n'|sort -u|tr '\n' ' '|trim
+    cmd_line='trim|sort -u'
+    if [ "$1" = '--from-sep-space' ] || [ "$2" = '--from-sep-space' ] \
+    || [ "$1" = '-s' ] || [ "$1" = '--space' ] \
+    || [ "$2" = '-s' ] || [ "$2" = '--space' ]; then
+        cmd_line="tr ' ' '\\n'|$cmd_line"
+    fi
+    if [ "$1" = '--to-sep-space' ] || [ "$2" = '--to-sep-space' ] \
+    || [ "$1" = '-s' ] || [ "$1" = '--space' ] \
+    || [ "$2" = '-s' ] || [ "$2" = '--space' ]; then
+        cmd_line="$cmd_line|tr '\\n' ' '|trim"
+    fi
+    eval "$cmd_line"
 }
 
 # extract the classes defined for a menu/submenu entry
@@ -686,6 +710,14 @@ get_menu_entry_classes()
 {
     echo "$1"|grep -o '\(menuentry\|submenu\).*'|head -n 1\
              |sed  's/^\(menuentry\|submenu\) \+'"'"'[^'"'"']\+'"'"' *\(\( \+--class \+[^ ]\+\)\+\)* \+--id.*$/\2/'|trim
+}
+
+# list all grub modules requirements for a file (parse 'insmod MODULE')
+get_manually_loaded_grub_modules_for_file()
+{
+    grep '^[[:blank:]]*insmod[[:blank:]]\+[^ ]\+[[:blank:]]*$' "$1" \
+    |sed 's/^[[:blank:]]*insmod[[:blank:]]\+\([^ ]\+\)[[:blank:]]*$/ \1 /g' \
+    |uniquify --to-sep-space
 }
 
 # extract the commands used in the configuration scripts specified
@@ -702,64 +734,182 @@ get_command_list()
             # shellcheck disable=SC2013
             for line in $(cat -s "$f"); do
                 IFS="$IFS_BAK"
-                if echo "$line"|grep -v '^ *#'|grep -v '^ *[^ ]\+ *= *.*$' \
-                                |grep -v '^ *[{}] *$'|grep -q '^ *[^ ]\+'
-                then
-                    line="$(echo "$line"|trim)"
-
-                    cmd="$(echo "$line"|awk '{print $1}'|trim)"
-
-                    if [ "$cmd" = 'if' ] || [ "$cmd" = 'elif' ]; then
-                        tested="$(echo "$line"|awk '{print $2}'|sed 's/ *; *$//'|trim)"
-                        if [ "$tested" != '[' ]; then
-                            cmds="$cmds $cmd"
-                            cmd="$tested"
-                        fi
-
-                    elif [ "$cmd" = 'set' ] && echo "$line"|grep -q '^ *set \+pager *='; then
-                        cmds="$cmds pager"
-
-                    elif echo "$cmd"|grep -q '^terminal_\(input\|output\)$'; then
-                        cmds="$cmds $cmd"
-                        cmd="$(echo "$line"|awk '{print $2}'|sed 's/ *; *$//'|trim)"
-                    fi
-
-                    if echo "$line"|grep -q '([[:blank:]]*memdisk[[:blank:]]*)'; then
-                        cmds="$cmds $cmd"
-                        cmds="$cmds tar"
-                        cmd='memdisk'
-                    fi
-
-                    if echo "$line"|grep -q '["'"'"']\?$\(SECOND\|MINUTE\|HOUR\|DAY\|MONTH\|YEAR\)["'"'"']\?'; then
-                        cmds="$cmds $cmd"
-                        cmd='datehook'
-                    fi
-                    cmds="$cmds $cmd"
-                fi
+                cmds="$cmds $(get_command_list_for_line "$line")"
             done
         fi
     done
-    echo "$cmds"|uniquify
+    echo "$cmds"|uniquify -s
+}
+
+# return a command list for a line
+#  $1  string  the line
+get_command_list_for_line()
+{
+    cmds=""
+    line="$1"
+    if echo "$line"|grep -v '^ *#' \
+                   |grep -v '^ *[{}] *$'|grep -q '^ *[^ ]\+'
+    then
+        line="$(echo "$line"|trim)"
+        line_split_pos=1
+        cmd="$(echo "$line"|awk '{print $1}'|trim)"
+
+        # if/elif command
+        if [ "$cmd" = 'if' ] || [ "$cmd" = 'elif' ]; then
+            line_split_pos="$((line_split_pos + 1))"
+            tested="$(echo "$line"|awk '{print $'"$line_split_pos"'}')"
+
+            # negation is useless
+            if [ "$tested" = '!' ]; then
+                line_split_pos="$((line_split_pos + 1))"
+                tested="$(echo "$line"|awk '{print $'"$line_split_pos"'}')"
+            fi
+
+            # '[' is useless (we already have 'if' which is also the 'test' module)
+            # what is inside [] is only vars
+            if [ "$tested" != '[' ]; then
+                cmds="$cmds $cmd"
+                cmd="$(echo "$tested"|sed 's/ *; *\(then *\)\?$//g')"
+            fi
+        fi
+
+        # assignation is a 'set' command
+        if echo "$line"|grep -q '^ *[^ ]\+ *= *.*$'; then
+            cmd="set"
+            line="set $line"
+        fi
+
+        # if the commands arguments are important for module analysis
+        if is_command_loading_modules_depending_on_its_args "$cmd"; then
+            line_split_pos="$((line_split_pos + 1))"
+            arg="$(echo "$line"|awk '{print $'"$line_split_pos"'}')"
+            if echo "$line"|grep -q '^ *\(el\)\?if '; then
+                arg="$(echo "$arg"|sed 's/ *; *\(then *\)\?$//g')"
+            fi
+            if [ "$cmd" = 'set' ]; then
+                setted="$(echo "$arg"|sed 's/^\([^=]\+\)=.*/\1/g')"
+                cmd="set($setted)"
+            else
+                cmd="$cmd($arg)"
+            fi
+        fi
+
+        # special case for disks mentions
+        if echo "$line"|grep -q '([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+\(,[^)]\+\)\?\)[[:blank:]]*)'; then
+            cmds="$cmds $cmd"
+            disk="$(echo "$line" \
+                    |sed -e 's/^.*([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+\(,[^)]\+\)\?\)[[:blank:]]*).*$/\1/g' \
+                         -e 's/ //g')"
+            cmd="disk($disk)"
+        fi
+
+        # special case for datehook variables
+        if echo "$line"|grep -q '["'"'"']\?$\(SECOND\|MINUTE\|HOUR\|DAY\|MONTH\|YEAR\)["'"'"']\?'; then
+            cmds="$cmds $cmd"
+            var="$(echo "$line"|sed 's/^.*["'"'"']\?$\(SECOND\|MINUTE\|HOUR\|DAY\|MONTH\|YEAR\)["'"'"']\?.*$/\1/g')"
+            cmd="var($var)"
+        fi
+        cmds="$cmds $cmd"
+    fi
+    echo "$cmds"
+}
+
+# return $TRUE if the command loads grub modules dynamically according to its arguments
+#  $1  string  the command
+is_command_loading_modules_depending_on_its_args()
+{
+    case "$1" in
+        set)                            return "$TRUE" ;;
+        terminal_input|terminal_output) return "$TRUE" ;;
+    esac
+    return "$FALSE"
+}
+
+# get grub modules for a 'set' command (using special keywords like 'pager')
+#  $1  string  the key that is sat
+get_grub_modules_for_set_command()
+{
+    modules=
+    case "$1" in
+        pager) modules="$modules sleep" ;; # pager functionnality loosely depends on sleep module
+    esac
+    echo "$modules"
+}
+
+# get grub modules for 'terminal*' command
+#  $1  string  the terminal input or output
+#  $2  string  the terminal module that is used
+get_grub_modules_for_terminal_command()
+{
+    modules=
+    case "$1" in
+        gfxterm|at_keyboard) modules="$modules $1" ;;
+        usb_keyboard*)       modules="$modules usb_keyboard" ;;
+    esac
+    echo "$modules"
+}
+get_grub_modules_for_terminal_input_command()
+{
+    echo "terminal_input $(get_grub_modules_for_terminal_command "$@")"
+}
+get_grub_modules_for_terminal_output_command()
+{
+    echo "terminal_output $(get_grub_modules_for_terminal_command "$@")"
+}
+
+# get grub modules for a special 'disk' command
+#  $1  string  the disk that is used
+get_grub_modules_for_disk_command()
+{
+    modules=
+    case "$1" in
+        memdisk) modules="$modules memdisk tar" ;;
+        proc)    modules="$modules procfs" ;;
+        hd*)     modules="$modules biosdisk" ;;
+        ahci*|ata*|pata*|scsi*) modules="$modules $(echo "$1"|sed 's/[0-9]\+\(,[^)]\+\)\?$//g')" ;;
+    esac
+    if echo "$1"|grep -q ',[^)]\+$'; then
+        part="$(echo "$1"|sed 's/^.*,//g;s/[0-9]\+$//g')"
+        case "$part" in
+            msdos) modules="$modules part_msdos" ;;
+        esac
+    fi
+    echo "$modules"
+}
+
+# get grub modules for a special 'var' command
+#  $1  string  the var that is used
+get_grub_modules_for_var_command()
+{
+    modules=
+    case "$1" in
+        SECOND|MINUTE|HOUR|DAY|MONTH|YEAR) modules="$modules datehook" ;;
+    esac
+    echo "$modules"
 }
 
 # get grub modules for a grub shell command
 #  $1  string  the grub shell command
-get_grub_cmd_modules()
+get_cmd_grub_modules()
 {
     cmd="$1"
     modules=
 
+    # command is one of the 'test' module
     if echo "$cmd"|grep -q '^\(\(el\)\?if\|else\|fi\)$'; then
         modules="test"
+
+    # if command is a special command (with parenthesis)
+    elif echo "$cmd"|grep -q '^[^(]\+([^)]\+)$'; then
+        special_command_name="$(echo "$cmd"|sed 's/^\([^(]\+\)(.*$/\1/g')"
+        special_command_arg="$(echo "$cmd"|sed 's/^[^(]\+(\([^)]\+\))$/\1/g')"
+        func="get_grub_modules_for_${special_command_name}_command"
+        modules="$modules $(eval "$func '$special_command_arg'")"
+
+    # no special command
+    else
+        modules="$(grep "^ *$cmd *:" "$GRUB_MODDIR/command.lst"|awk '{print $2}')"
     fi
-
-    if [ "$cmd" = 'pager' ]; then
-        modules="sleep"
-    fi
-
-    deps="$(get_modules_deps "$cmd")"
-
-    modules="$modules $deps"
     echo "$modules"
 }
 
@@ -769,29 +919,38 @@ get_grub_cmd_modules()
 #  $GRUB_MODDIR  the grub modules directory
 # return format is a list separated by space
 # note: recursive
-get_modules_deps()
+get_grub_module_deps()
 {
     module="$1"
 
-    already_found_deps="$(echo "$2"|tr '\n' ' '|trim)"
-
-    if [ "$already_found_deps" = '' ] && [ -e "$GRUB_MODDIR/$module.mod" ]; then
-        already_found_deps="$module"
-    fi
-
-    new_deps=$(grep -h "^\\*\\?$module:" "$GRUB_MODDIR"/*.lst \
-              |sed "s/^\\*\\?$module:[[:blank:]]*//g"|sort -u|tr '\n' ' '|trim)
+    already_found_deps="$(echo "$2"|trim|tr '\n' ' '|trim)"
     deps="$already_found_deps"
 
-    if [ ! -z "$new_deps" ] && [ "$new_deps" != "$already_found_deps" ]; then
+    new_deps=
+    dep_line="$(grep "^\\*\\?$module:" "$GRUB_MODDIR"/moddep.lst 2>/dev/null || true)"
+    if [ "$dep_line" != '' ]; then
+        new_deps="$(echo "$dep_line"|sed 's/^\\*\\//g;s/ *: */ /g')"
+    fi
+
+    if [ "$new_deps" != '' ] && [ "$new_deps" != "$already_found_deps" ]; then
         for m in $new_deps; do
             if ! echo " $deps "|grep -q " $m "; then
-                m_deps="$(get_modules_deps "$m" "$deps $m")"
-                deps="$(echo "$deps $m_deps"|uniquify)"
+                m_deps="$(get_grub_module_deps "$m" "$deps $m")"
+                deps="$(echo "$deps $m_deps"|uniquify -s)"
             fi
         done
     fi
     echo "$deps"
+}
+
+# get the list of grub modules required for a command line
+# in a grub shell script
+#  $1  string  the line to parse
+get_grub_modules_deps_for_line()
+{
+    for cmd in $(get_command_list_for_line "$1"); do
+        get_cmd_grub_modules "$cmd"
+    done|uniquify -s
 }
 
 # get the top level parent device of specified device
@@ -812,15 +971,39 @@ get_top_level_parent_device()
 # get the PCI bus for the specified device path
 #  $1  string  the device path
 # return: the PCI bus
-get_pci_bus_for_device()
+get_pci_bus_for_disk_device()
 {
     toplvldisk="$(get_top_level_parent_device "$1")"
-    pciblockpath=$(realpath /sys/block/"$toplvldisk")
-    if ! echo "$pciblockpath"|grep -q '^/sys/devices/pci[^/]\+/'; then
-        echo "ERROR: not a PCI device '$toplvldisk'" >&2
+    pciblockpath="$(realpath /sys/block/"$toplvldisk")"
+    pci_bus="$(get_pci_bus_for_device "$pciblockpath" "$toplvldisk")"
+    echo "$pci_bus"
+}
+
+# get the PCI bus for the specified device path
+#  $1  string  the device path
+#  $2  string  an informative description of the device
+# return: the PCI bus
+get_pci_bus_for_device()
+{
+    device_desc="$2"
+    if [ "$device_desc" != '' ]; then
+        device_desc=" '$device_desc'"
+    fi
+    if ! echo "$1"|grep -q '^/sys/.*/pci[^/]\+/\([^/]\+\)/'; then
+        echo "ERROR: not a PCI device$device_desc" >&2
         return $FALSE
     fi
-    echo "$pciblockpath"|sed 's#^/sys/devices/pci[^/]\+/\([^/]\+\)/.*/block/'"$toplvldisk"'$#\1#g'
+    echo "$1"|sed 's#^/sys/.*/pci[^/]\+/\([^/]\+\)/.*$#\1#g'
+}
+
+# get the kernel driver used for a PCI device
+#  $1  string  the PCI bus of the device
+# return the driver name used by the kernel
+get_driver_for_pci_device()
+{
+    LC_ALL=C lspci -s "$1" -k \
+    |grep 'Kernel driver in use: '|awk -F ':' '{print $2}'|trim \
+    ||true
 }
 
 # Generate a list of 9 HEX colors (space separated)
@@ -896,6 +1079,27 @@ ENDCAT
     fi
 }
 
+# define theme's modules to load
+#  $1  string  the themes names (separated by space)
+load_theme_modules()
+{
+    t_count=0
+    for t in $1; do
+        modules_theme="$(get_modules_from_theme_files \
+            "$(find "$GRUB_THEMES_DIR/$t" \( -name "$GRUB_THEME_FILENAME" -o -name "$GRUB_THEME_INNER_FILENAME" \) -printf "%p$NL")" \
+        )"
+        t_cond="$(if [ "$t_count" -eq 0 ]; then echo 'if'; else echo 'elif'; fi)"
+        t_count="$((t_count + 1))"
+        cat <<ENDCAT
+$t_cond [ "\$theme_name" = "$t" ]; then
+    $(for m in $modules_theme; do echo "insmod $m"; done|indent 4)
+ENDCAT
+    done
+    if [ "$t_count" -gt 0 ]; then
+        echo 'fi'
+    fi
+}
+
 # check other hosts option input value
 check_opt_other_hosts()
 {
@@ -955,7 +1159,96 @@ get_modules_from_theme_files()
             fi
         fi
     done
-    echo "$t_modules"|uniquify
+    echo "$t_modules"|uniquify -s
+}
+
+# list ps2 keyboard detected
+# return format is: [serioXXX/inputYYY] serio_name: keyboard name
+detect_ps2_keyboards()
+{
+    # or grep -li 'keyboard driver' /sys/class/input/*/device/driver/description
+    #ls -1 /sys/bus/serio/drivers/atkbd/*/input/*/name|while read -r input_name_file; do
+    find /sys/bus/serio/drivers/atkbd/ -follow -maxdepth 4 -type f -name 'name' \
+            -path '/sys/bus/serio/drivers/atkbd/*/input/*/name' 2>/dev/null     \
+            |while read -r input_name_file; do
+        input_dev_dir="$(dirname "$input_name_file")"
+        input_dev="$(basename "$input_dev_dir")"
+        input_name="$(head -n 1 "$input_name_file")"
+        serio_dev_dir="$(dirname "$(dirname "$input_dev_dir")")"
+        serio_dev="$(basename "$serio_dev_dir")"
+        serio_dev_name='unkown'
+        if [ -r "$serio_dev_dir"/description ]; then
+            serio_dev_name="$(head -n 1 "$serio_dev_dir"/description)"
+        fi
+        printf '[%s/%s] %s: %s' "$serio_dev" "$input_dev" "$serio_dev_name" "$input_name"
+    done || true
+}
+
+# list usb keyboard detected
+# return format is: [usbhid_dev_num] vendor/product: keyboard name
+detect_usb_keyboards()
+{
+    grep -l '^01$' /sys/bus/usb/drivers/*/*/bInterfaceProtocol 2>/dev/null|while read -r h_ip; do
+        usb_driver_dir="$(dirname "$h_ip")"
+        usb_driver_dirname="$(basename "$usb_driver_dir")"
+        find "$usb_driver_dir/" -maxdepth 1 -not -path "$usb_driver_dir/" -type d|while read -r dev; do
+            if [ -d "$dev"/input ]; then
+                find "$dev/input" -maxdepth 1 -not -path "$dev" -type d|while read -r input; do
+                    dev_name='unknown'
+                    if [ -r "$input"/name ]; then
+                        dev_name="$(head -n 1 "$input"/name)"
+                    fi
+                    dev_vendor='unknown'
+                    if [ -r "$input"/id/vendor ]; then
+                        dev_vendor="$(head -n 1 "$input"/id/vendor)"
+                    fi
+                    dev_product='unknown'
+                    if [ -r "$input"/id/product ]; then
+                        dev_product="$(head -n 1 "$input"/id/product)"
+                    fi
+                    if [ "$dev_name" != 'unknown' ] \
+                    || [ "$dev_vendor" != 'unknown' ] \
+                    || [ "$dev_product" != 'unknown' ]; then
+                        txt_id_name="$(printf "%s (%s/%s)" "$dev_name" "$dev_vendor" "$dev_product")"
+
+                        usb_dev_path="$(realpath "$usb_driver_dir")"
+                        pci_bus="$(get_pci_bus_for_device "$usb_dev_path" "$usb_driver_dirname")"
+                        driver="$(get_driver_for_pci_device "$pci_bus")"
+                        if [ "$driver" = '' ]; then
+                            fatal_error "Failed to find driver for usb keyboard '%s'" "$txt_id_name"
+                        fi
+
+                        printf "(%s) [%s] %s/%s: %s\\n" \
+                            "$driver" "$usb_driver_dirname" "$dev_vendor" "$dev_product" "$dev_name"
+                    fi
+                done || true
+            fi
+        done || true
+    done || true
+}
+
+# get the drivers required for the disk
+#  $1  string  the disk device path (i.e.: /dev/sda1)
+#  $2  string  (optional) the pci bus ()
+get_drivers_for_disk()
+{
+    driver=
+    device_path="$1"
+    pci_bus="$2"
+    if [ "$pci_bus" = '' ]; then
+        pci_bus="$(get_pci_bus_for_disk_device "$device_path")"
+    fi
+    driver="$(get_driver_for_pci_device "$pci_bus")"
+    if [ "$driver" = '' ]; then
+        fatal_error "Failed to find driver for disk '%s'" "$device_path"
+    fi
+}
+
+# return true if the grub modules list contains one that prevent using the firmware driver
+#  $1  string  the list of grub modules (space separated)
+contains_a_grub_module_that_disable_firmware_driver()
+{
+    echo " $1 "|grep -q ' [uoae]hci\|usbms\|nativedisk '
 }
 
 
@@ -1022,6 +1315,7 @@ debug "HOSTNAME: %s" "$HOSTNAME"
 debug "Sourcing configuration '%s'" "$config"
 # shellcheck disable=SC1090
 . "$config"
+
 
 # ensure binaries are found, and their version matches
 b_version=
@@ -1395,6 +1689,41 @@ if bool "$multi_host_mode"; then
     GRUB_TERMINAL_BG_IMAGE=${GRUB_MEMDISK_DIR}${host_prefix}/terminal_background.tga
 fi
 
+
+# no custom core.cfg provided
+if [ "$GRUB_EARLY_CORE_CFG" = '' ]; then
+
+# echo ""
+# echo "Devices detected:"
+# ls
+# echo ""
+# echo "Hit enter to continue grub-shell script ..."
+# read cont
+
+    # /!\ comments will be removed because at this stage they are not supported
+    cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+set root=(memdisk)
+set prefix=(\$root)
+
+set enable_progress_indicator=0
+
+normal \$prefix/$(basename "$GRUB_NORMAL_CFG")
+ENDCAT
+
+# custom core.cfg provided
+else
+    info "Copying '%s' to '%s'" "$GRUB_EARLY_CORE_CFG" "$GRUB_CORE_CFG"
+    cp "$GRUB_EARLY_CORE_CFG" "$GRUB_CORE_CFG"
+fi
+
+# build the modules list
+debug "Building 'preloaded' grub modules list for the current host ..."
+
+# modules for core.cfg
+modules_core="$(for cmd in $(get_command_list "$GRUB_CORE_CFG"); do get_cmd_grub_modules "$cmd"; done|uniquify -s)"
+debug " - modules for %s: %s" "$(basename "$GRUB_CORE_CFG")" "$modules_core"
+
+
 # create the keyboard layout
 if [ "$GRUB_EARLY_KEYMAP" != 'en' ] && [ "$GRUB_EARLY_KEYMAP" != 'us' ]; then
     kbdlayout_dest=${GRUB_MEMDISK_DIR}${host_prefix}/${GRUB_EARLY_KEYMAP}.gkb
@@ -1421,9 +1750,16 @@ fi
 if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
 
     # ensure font is up to date
-    font_dest=${GRUB_MEMDISK_DIR}${host_prefix}/${GRUB_EARLY_FONT}.pf2
-    info "Copying font '%s' to '%s'" "$GRUB_EARLY_FONT" "$font_dest"
-    cp "$GRUB_PREFIX/share/grub/$GRUB_EARLY_FONT.pf2" "$font_dest"
+    font_src="$GRUB_PREFIX/share/grub/$GRUB_EARLY_FONT.pf2"
+    if echo "$GRUB_EARLY_FONT"|grep -q '/' \
+    || echo "$GRUB_EARLY_FONT"|grep -q '\.pf2$' && [ -f "$GRUB_EARLY_FONT" ]; then
+        font_src="$GRUB_EARLY_FONT"
+    elif echo "$GRUB_EARLY_FONT"|grep -q '\.pf2$'; then
+        font_src="$GRUB_PREFIX/share/grub/$GRUB_EARLY_FONT"
+    fi
+    font_dest="${GRUB_MEMDISK_DIR}${host_prefix}/$(basename "$font_src" '.pf2').pf2"
+    info "Copying font '%s' to '%s'" "$(basename "$font_src" '.pf2')" "$font_dest"
+    cp "$font_src" "$font_dest"
 
     # ensure theme is up to date
     if bool "$THEME_ENABLED"; then
@@ -1432,7 +1768,8 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
         rm -fr "$GRUB_THEMES_DIR"
 
         info "Creating theme dir '%s'" "$GRUB_THEMES_DIR"
-        mkdir -p "$GRUB_THEMES_DIR"
+        # shellcheck disable=SC2174
+        mkdir -m 0700 -p "$GRUB_THEMES_DIR"
 
         # processing themes in normal mode or day/night mode
         for s in $var_suffixes; do
@@ -1507,7 +1844,7 @@ fi
 # detect all initramfs and kernel
 debug "Detecting bootable kernels ..."
 kernels=
-for l in $(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n"|sort -u); do
+for l in $(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n"|sort -urV); do
     # shellcheck disable=SC2001
     kernel_version="$(echo "$l"|sed 's/^vmlinuz-//')"
     if [ -f /boot/"initrd.img-$kernel_version" ]; then
@@ -1519,22 +1856,22 @@ info "Found kernels: %s" "$(echo "$kernels"|trim)"
 # detect required disk UUIDs to unlock /boot
 debug "Detecting required disk UUIDs to unlock /boot ..."
 boot_required_uuid="$($GRUB_PROBE -t cryptodisk_uuid /boot)"
-debug "Found: $(echo "$boot_required_uuid"|tr '\n' ','|sed 's/ *, *$//')"
+debug "Found: %s" "$(echo "$boot_required_uuid"|tr '\n' ','|sed 's/ *, *$//')"
 
 # detect required disk UUIDs to define initial root fs
 debug "Detecting required disk UUIDs to define initial root fs ..."
 rootfs_initial_uuid="$($GRUB_PROBE -t arc_hints /boot)"
-debug "Found: $(echo "$rootfs_initial_uuid"|tr '\n' ','|sed 's/ *, *$//')"
+debug "Found: %s" "$(echo "$rootfs_initial_uuid"|tr '\n' ','|sed 's/ *, *$//')"
 
 # detect disk UUIDs to search for root fs
 debug "Detecting disk UUIDs to search for root fs ..."
 rootfs_uuid_hints="$($GRUB_PROBE -t hints_string /boot)"
-debug "Found: $(echo "$rootfs_uuid_hints"|tr '\n' ','|sed 's/ *, *$//')"
+debug "Found: %s" "$(echo "$rootfs_uuid_hints"|tr '\n' ','|sed 's/ *, *$//')"
 
 # detect filesystem UUIDs of /boot
 debug "Detecting filesystem UUIDs of /boot ..."
 boot_fs_uuid="$($GRUB_PROBE -t fs_uuid /boot)"
-debug "Found: $(echo "$boot_fs_uuid"|tr '\n' ','|sed 's/ *, *$//')"
+debug "Found: %s" "$(echo "$boot_fs_uuid"|tr '\n' ','|sed 's/ *, *$//')"
 
 # get PCI identification of the /boot devices
 debug "Getting PCI identification of the /boot devices"
@@ -1542,7 +1879,7 @@ pci_devices_var_set=
 pci_devices_id_functions=
 for d in $($GRUB_PROBE -t device /boot); do
     toplvldisk="$(get_top_level_parent_device "$d")"
-    pci_bus="$(get_pci_bus_for_device "$d"|sed 's/^0000://g')"
+    pci_bus="$(get_pci_bus_for_disk_device "$d"|sed 's/^0000://g')"
     pci_set="setpci -s $pci_bus"
     pci_vars=
     pci_exports=
@@ -1573,6 +1910,172 @@ for d in $($GRUB_PROBE -t device /boot); do
     pci_devices_id_functions="$(echo "$pci_devices_id_functions -a $pci_id_conditions"|sed 's/^ -a //g')"
 done
 
+# get kernel driver used for each /boot devices
+debug "Getting kernel drivers of /boot devices"
+boot_devices_kernel_drivers=
+for d in $($GRUB_PROBE -t device /boot); do
+    pci_bus="$(get_pci_bus_for_disk_device "$d"|sed 's/^0000://g')"
+    driver="$(get_driver_for_pci_device "$pci_bus" "$d")"
+    boot_devices_kernel_drivers="$boot_devices_kernel_drivers $driver"
+done
+boot_devices_kernel_drivers="$(echo "$boot_devices_kernel_drivers"|uniquify -s)"
+debug "Found: %s" "$boot_devices_kernel_drivers"
+
+# get keyboards
+debug "Detecting keyboards"
+ps2_keyboards="$(detect_ps2_keyboards)"
+if [ "$ps2_keyboards" != '' ]; then
+    debug "Found (ps2):\\n%s" "$(echo "$ps2_keyboards"|sed 's/^/ - /g')"
+fi
+usb_keyboards="$(detect_usb_keyboards)"
+if [ "$usb_keyboards" != '' ]; then
+    debug "Found (usb):\\n%s" "$(echo "$usb_keyboards"|sed 's/^/ - /g')"
+fi
+if [ "$ps2_keyboards" = '' ] && [ "$usb_keyboards" = '' ]; then
+    fatal_error "No keyboard found"
+fi
+
+# detecting keyboards grub modules
+debug "Detecting keyboards grub modules"
+
+if bool "$GRUB_EARLY_NO_USB_KEYBOARD" && bool "$GRUB_EARLY_NO_PS2_KEYBOARD" \
+&& [ "$GRUB_EARLY_KEYMAP" != '' ]; then
+    fatal_error "You cannot have keymap '%s' and no 'at_keyboard' and no 'usb_keyboard' grub modules (because they are the only one which support keylayouts)." "$GRUB_EARLY_KEYMAP"
+fi
+
+# if ps2 keyboards were detected
+modules_keyboards=
+if [ "$ps2_keyboards" != '' ] && ! bool "$GRUB_EARLY_NO_PS2_KEYBOARD"; then
+
+    # enable 'at_keyboard' module
+    modules_keyboards='at_keyboard'
+fi
+
+# if usb keyboards were detected
+modules_usb_keyboards=
+mapping_usb_keyboards_grub_module=
+if [ "$usb_keyboards" != '' ] && ! bool "$GRUB_EARLY_NO_USB_KEYBOARD"; then
+
+    # enable 'usb_keyboard' module
+    modules_keyboards="$modules_keyboards usb_keyboard"
+
+    # for each of them
+    IFS="$NL"
+    for kbd_line in $usb_keyboards; do
+        IFS="$IFS_BAK"
+
+        # get their driver
+        driver="$(echo "$kbd_line"|sed 's/^(\([^)]\+\)).*/\1/g')"
+
+        # grub module for this driver	
+        #driver="$(echo "$driver"|grep -o '[ue]hci')"
+        grub_module="$(echo "$driver"|sed 's/\([eu]hci\)[_-].*/\1/g')"
+
+        # add the keyboard and its modules to the mapping
+        kbd_name="$(echo "$kbd_line"|sed 's/^([^)]\+).*: \(.*\)/\1/g'|trim)"
+        if [ "$kbd_name" = '' ]; then
+            kbd_name="$(echo "$kbd_line"|sed 's/^([^)]\+) \(.*\): .*/\1/g'|trim)"
+        fi
+        mapping_usb_keyboards_grub_module="$grub_module | $kbd_name"
+
+        # 'uhci' module seem to work only with 'ehci'
+        # maybe the reverse is also true but I cannot test it myself
+        if [ "$grub_module" = 'uhci' ]; then
+            grub_module="$grub_module ehci"
+        fi
+        modules_usb_keyboards="$modules_usb_keyboards $grub_module"
+    done
+    modules_usb_keyboards="$(echo "$modules_usb_keyboards"|uniquify -s)"
+fi
+modules_keyboards="$modules_keyboards $modules_usb_keyboards"
+if [ "$modules_keyboards" = '' ] && [ "$modules_usb_keyboards" = '' ]; then
+    fatal_error "No keyboards grub module found"
+fi
+debug "Found: %s" "$modules_keyboards"
+
+# one of the usb keyboard grub module disable the use of firmware driver
+if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards"; then
+
+    # if one of the /boot devices has driver 'virtio'
+    if echo "$boot_devices_kernel_drivers"|grep -q 'virtio'; then
+        first_incompatible_kbd="$(echo "$mapping_usb_keyboards_grub_module"|grep '^[ueo]hci\|^usbms'|head -n 1)"
+        first_incompatible_kbd_module="$(echo "$first_incompatible_kbd"|awk -F '|' '{print $1}'|trim)"
+        first_incompatible_kbd_name="$(echo "$first_incompatible_kbd"|awk -F '|' '{print $2}'|trim)"
+        err_msg="$(printf \
+            "Incompatible grub module requirements between usb keyboard driver '%s' and "`
+            `"disk driver '%s'." \
+            "$first_incompatible_kbd_module" 'virtio'
+        )"
+        err_desc="$(printf \
+            "The usb grub module '%s' prevents using firmware driver (grub module "`
+            `"'%s'). That requires a suitable grub module for disk driver (like 'ahci' "`
+            `"for SATA, or 'scsi', etc.). But there is no grub module for disk driver "`
+            `"'%s'. So you will not be able to access the disk if you use this usb grub "`
+            `"module '%s'.$NL"`
+            `"To solve this issue: either configure your KVM virtual Machine to use SATA "`
+            `"disks, or use a PS2 keyboard (instead of the usb one '%s')." \
+            "$first_incompatible_kbd_module" 'biosdisk' 'virtio' \
+            "$first_incompatible_kbd_module" "$first_incompatible_kbd_name"
+        )"
+        fatal_error "${err_msg}${NL}$err_desc"
+    
+    # else, add the disk drivers to the usb keyboard modules (used with nativedisk)
+    else
+        modules_usb_keyboards="$modules_usb_keyboards $boot_devices_kernel_drivers"
+    fi
+fi
+
+# user wants to force some keyboard modules
+if bool "$GRUB_EARLY_FORCE_USB_KEYBOARD" || bool "$GRUB_EARLY_FORCE_PS2_KEYBOARD"; then
+    if bool "$GRUB_EARLY_FORCE_USB_KEYBOARD" \
+    && ! echo " $modules_keyboards "|grep -q ' usb_keyboard '; then
+        debug "Forcing 'usb_keyboard' for keyboards grub modules"
+        modules_keyboards="$modules_keyboards usb_keyboard"
+        usb_keyboards="User forced USB keyboard"
+    fi
+
+    if bool "$GRUB_EARLY_FORCE_PS2_KEYBOARD" \
+    && ! echo " $modules_keyboards "|grep -q ' at_keyboard '; then
+        debug "Forcing 'at_keyboard' for keyboards grub modules"
+        modules_keyboards="$modules_keyboards at_keyboard"
+        ps2_keyboards="User forced PS2 keyboard"
+    fi
+fi
+
+
+# helper var for keyboard
+using_usb_keyboard=false
+using_at_keyboard=false
+using_both_keyboards=false
+usb_keyboards_count=
+usb_keyboards_input=
+if echo " $modules_keyboards "|grep -q ' usb_keyboard '; then
+    using_usb_keyboard=true
+    usb_keyboards_count="$(echo "$usb_keyboards"|wc -l)"
+    usb_keyboards_input="$(for c in $(seq 0 "$((usb_keyboards_count - 1))"); do \
+        printf ' usb_keyboard%s' "$c"; done|trim)"
+fi
+if echo " $modules_keyboards "|grep -q ' at_keyboard '; then
+    using_at_keyboard=true
+fi
+if bool "$using_usb_keyboard" && bool "$using_at_keyboard"; then
+    using_both_keyboards=true
+fi
+
+
+# grub modules for disks devices
+debug "Getting grub modules for disks devices"
+modules_crypto="$($GRUB_PROBE -t abstraction /boot|uniquify --to-sep-space)"
+modules_disks='biosdisk'
+if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards"; then
+    # disable biodisk when using disk drivers
+    modules_disks=
+fi 
+modules_disks="$modules_disks $($GRUB_PROBE -t partmap /boot|sed 's/^/part_/g'|uniquify --to-sep-space)"
+modules_fs="$($GRUB_PROBE -t fs /boot|uniquify --to-sep-space)"
+modules_devices="$modules_crypto $modules_disks $modules_fs"
+debug "Found: %s" "$modules_devices"
+
 
 # no custom normal.cfg provided
 if [ -z "$GRUB_EARLY_NORMAL_CFG" ]; then
@@ -1587,21 +2090,71 @@ submenu_gfxmode"
     fi
 
     GRUB_AT_TERMINAL_CONF=
-    if ! bool "$GRUB_EARLY_NO_ALTERNATIVE_INPUT" \
-    && [ "$GRUB_EARLY_KEYMAP" != '' ]   \
-    && [ "$GRUB_EARLY_KEYMAP" != 'en' ] \
-    && [ "$GRUB_EARLY_KEYMAP" != 'us' ]; then
+    keyboard_indent=0
+
+    if bool "$using_both_keyboards"; then
+    # for m in $modules_usb_keyboards; do echo "insmod $m"; done; \
         GRUB_AT_TERMINAL_CONF="
-# 'at_keyboard' use keyboard layout ('console' doesn't)
-terminal_input at_keyboard"
+# try to use all keyboard modules (usb* and at)
+insmod usb_keyboard
+insmod at_keyboard
+$(if [ "$modules_usb_keyboards" != '' ]; then \
+    echo "insmod nativedisk"; \
+    echo "nativedisk $modules_usb_keyboards"; \
+fi)
+if ! terminal_input $usb_keyboards_input at_keyboard; then
+"
     fi
 
+    if bool "$using_usb_keyboard"; then
+        keyboard_indent="$(if bool "$using_both_keyboards"; then echo 4; else echo 0; fi)"
+        # for m in $modules_usb_keyboards; do echo "insmod $m"; done; \
+        GRUB_AT_TERMINAL_CONF="$(printf '%s%s' "$GRUB_AT_TERMINAL_CONF" "$(echo "
+# try to use all usb keyboards
+$(if ! bool "$using_both_keyboards"; then echo \
+"insmod usb_keyboard
+"; \
+    if [ "$modules_usb_keyboards" != '' ]; then \
+        echo "insmod nativedisk"; \
+        echo "nativedisk $modules_usb_keyboards"; \
+    fi
+fi)
+if ! terminal_input $usb_keyboards_input; then"|indent "$keyboard_indent")")"
+        if bool "$using_both_keyboards"; then
+            GRUB_AT_TERMINAL_CONF="${GRUB_AT_TERMINAL_CONF}${NL}"
+        fi
+    fi
+
+    if bool "$using_at_keyboard"; then
+        keyboard_indent="$(if bool "$using_both_keyboards"; then echo 8; else echo 0; fi)"
+        GRUB_AT_TERMINAL_CONF="$(printf '%s%s' "$GRUB_AT_TERMINAL_CONF" "$(echo "
+# try to use ps2 keyboard
+$(if ! bool "$using_both_keyboards"; then echo "insmod at_keyboard"; fi)
+if ! terminal_input at_keyboard; then"|indent "$keyboard_indent")")"
+    fi
+
+    if bool "$using_usb_keyboard" || bool "$using_at_keyboard"; then
+        keyboard_indent="$(if bool "$using_both_keyboards"; then echo 8; else echo 0; fi)"
+        GRUB_AT_TERMINAL_CONF="$(printf '%s\n%s' "$GRUB_AT_TERMINAL_CONF" "$(echo "
+    # fallback to 'console'
+    terminal_input console
+fi"|indent "$keyboard_indent")")"
+        if bool "$using_both_keyboards"; then
+            GRUB_AT_TERMINAL_CONF="$GRUB_AT_TERMINAL_CONF
+    fi
+fi"
+        fi
+    fi
     
     # shellcheck disable=SC2030,SC2031
     GRUB_MENUS_ENTRIES_KERNELS="
 # menu wrapper for host kernel entries
+$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" = '' ] && ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo \
+"insmod gfxterm_menu
+insmod gfxmenu
+"; fi)
 submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' $(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 8)
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 8; else echo 4; fi)")
 
 $(for k in $kernels; do
     # shellcheck disable=SC2059
@@ -1614,12 +2167,17 @@ $(for k in $kernels; do
         #set color_normal=light-gray/black
         #set color_highlight=dark-gray/black
 
+        $(for m in $modules_devices; do echo "insmod $m"; done|indent 8)
         $(for uuid in $boot_required_uuid; do
         echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
         echo 'msg';
-        done|indent 12)
+        done|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 12; else echo 8; fi)")
+
+        insmod search
+        insmod linux
 
         search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+
         msg 'Loading Linux $k ...'
         linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
         msg 'Loading intial ram disk ...'
@@ -1629,12 +2187,17 @@ $(for k in $kernels; do
         #set color_normal=light-gray/black
         #set color_highlight=dark-gray/black
 
+        $(for m in $modules_devices; do echo "insmod $m"; done|indent 8)
         $(for uuid in $boot_required_uuid; do
         echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
         echo 'msg';
-        done|indent 12)
+        done|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 12; else echo 8; fi)")
+
+        insmod search
+        insmod linux
 
         search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+
         msg 'Loading Linux $k ...'
         linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro single
         msg 'Loading intial ram disk ...'
@@ -1648,6 +2211,12 @@ done)
     # create a configuration file with menuentry (for normal mode)
     info "Creating configuration file '%s'" "$GRUB_NORMAL_CFG"
     touch "$GRUB_NORMAL_CFG"
+
+    cat >> "$GRUB_NORMAL_CFG" <<ENDCAT
+
+# loading 'test' module
+insmod test
+ENDCAT
 
     # disable 'progress indicator' to prevent terminal box poping out
     # in gfx mode
@@ -1671,6 +2240,7 @@ export verbosity
 function msg {
     if [ \$verbosity -gt $V_QUIET ]; then
         shift
+        insmod echo
         echo "\${1}"
     fi
 }
@@ -1680,6 +2250,7 @@ ENDCAT
     if [ "$GRUB_EARLY_VERBOSITY" = "$V_DEBUG" ]; then
         cat >> "$GRUB_NORMAL_CFG" <<ENDCAT
 
+insmod sleep
 # enable pager
 set pager=1
 ENDCAT
@@ -1691,6 +2262,7 @@ ENDCAT
         cat >> "$GRUB_NORMAL_CFG" <<ENDCAT
 
 ### day/night mode calculations ###
+insmod datehook
 
 # day time by default
 set day_night_mode=day
@@ -1766,6 +2338,7 @@ ENDCAT
 
     # common configuration
     if [ -r \$prefix/conf_common.cfg ]; then
+        insmod configfile
         source  \$prefix/conf_common.cfg
     fi
 ENDCAT
@@ -1778,6 +2351,7 @@ ENDCAT
         detection_host_path="$host_dir/$GRUB_HOST_DETECTION_FILENAME"
         info "Creating detection file '%s'" "$detection_host_path"
         cat > "$detection_host_path" <<ENDCAT
+insmod setpci
 $pci_devices_var_set
 
 # if '$HOSTNAME' host is detected
@@ -1801,6 +2375,7 @@ $(cat "$host_detection_file")
     
     # load host configuration
     if [ -r \$prefix${h_prefix}/$GRUB_HOST_CONFIGURATION_FILENAME ]; then
+        insmod configfile
         source \$prefix${h_prefix}/$GRUB_HOST_CONFIGURATION_FILENAME
     fi
 fi
@@ -1838,6 +2413,7 @@ ENDCAT
         cat >> "$params_host_path" <<ENDCAT
 
 # load keyboard layout (not enabled yet)
+insmod keylayouts
 keymap \$prefix${h_prefix}/$(basename "$kbdlayout_dest")
 ENDCAT
     fi
@@ -1860,6 +2436,7 @@ ENDCAT
             cat >> "$params_host_path" <<ENDCAT
 
 # load font
+insmod font
 loadfont \$prefix${h_prefix}/$(basename "$font_dest")
 ENDCAT
         fi
@@ -1890,14 +2467,11 @@ $(select_random_theme "$ALL_THEME_NAMES")
 ENDCAT
                 fi
 
-                # export theme name and set the theme (path)
+                # load theme modules
                 cat >> "$params_host_path" <<ENDCAT
 
-# export the theme name
-export theme_name
-
-# define theme path (not enabled yet)
-set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
+# load theme modules
+$(load_theme_modules "$ALL_THEME_NAMES")
 ENDCAT
 
             # day/night mode
@@ -1933,8 +2507,20 @@ fi
 ENDCAT
                 fi
 
-                # export theme name and set the theme (path)
+                # load theme modules
                 cat >> "$params_host_path" <<ENDCAT
+
+# load theme modules
+if [ "\$day_night_mode" = "day" ]; then
+    $(load_theme_modules "$ALL_THEME_NAMES_DAY"|indent 4)
+else
+    $(load_theme_modules "$ALL_THEME_NAMES_NIGHT"|indent 4)
+fi
+ENDCAT
+            fi
+
+            # export theme name, set its path and load its modules
+            cat >> "$params_host_path" <<ENDCAT
 
 # export the theme name
 export theme_name
@@ -1943,7 +2529,6 @@ export theme_name
 set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
 ENDCAT
 
-            fi
         fi
 
         # gfxmode definition
@@ -1968,6 +2553,8 @@ ENDCAT
         cat >> "$params_host_path" <<ENDCAT
 
 # switch to gfx rendering (use above settings)
+insmod all_video
+insmod gfxterm
 terminal_output gfxterm
 ENDCAT
 
@@ -1979,6 +2566,7 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
+insmod gfxterm_background
 background_color "$GRUB_EARLY_TERMINAL_BG_COLOR"
 ENDCAT
             # no background color defined, but theming enabled
@@ -1986,6 +2574,7 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
+insmod gfxterm_background
 $(set_term_background_color "$ALL_THEME_NAMES")
 ENDCAT
             fi
@@ -2007,6 +2596,7 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
+insmod gfxterm_background
 if [ "\$day_night_mode" = "day" ]; then
     background_color "$GRUB_EARLY_TERMINAL_BG_COLOR_DAY"
 else
@@ -2018,6 +2608,7 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background color
+insmod gfxterm_background
 if [ "\$day_night_mode" = "day" ]; then
     $(set_term_background_color "$ALL_THEME_NAMES_DAY"|indent 4)
 else
@@ -2103,6 +2694,7 @@ set alternative_config_enabled=0
 terminal_input console
 
 # a key status is available
+insmod keystatus
 if keystatus; then
 
     # 'shift' key was pressed
@@ -2132,6 +2724,7 @@ if [ "\$hostname" = "$h" ]; then
     
     # load host menu
     if [ -r \$prefix${h_prefix}/$GRUB_HOST_MENUS_FILENAME ]; then
+        insmod configfile
         source \$prefix${h_prefix}/$GRUB_HOST_MENUS_FILENAME
     fi
 fi
@@ -2161,6 +2754,10 @@ ENDCAT
         cat >> "$menus_host_path" <<ENDCAT
 
 # menu wrapper
+$(if ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo \
+"insmod gfxterm_menu
+insmod gfxmenu
+"; fi)
 submenu '$GRUB_EARLY_WRAP_IN_SUBMENU' $(get_submenu_classes "$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES") --id 'submenu-default' {
     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
 ENDCAT
@@ -2192,6 +2789,7 @@ ENDCAT
             cat >> "$menus_host_path" <<ENDCAT
     # common menu
     if [ -r \$prefix/menu_common.cfg ]; then
+        insmod configfile
         source  \$prefix/menu_common.cfg
     fi
 ENDCAT
@@ -2210,66 +2808,42 @@ else
 fi
 conf_files="$conf_files${NL}$GRUB_NORMAL_CFG"
 
-# no custom core.cfg provided
-if [ -z "$GRUB_EARLY_CORE_CFG" ]; then
-
-# terminfo
-# videoinfo
-
-    # /!\ do not use comments before switching to normal mode, or it will crash!
-    cat > "$GRUB_CORE_CFG" <<ENDCAT
-set root=(memdisk)
-set prefix=(\$root)
-
-set enable_progress_indicator=0
-
-normal \$prefix/$(basename "$GRUB_NORMAL_CFG")
-ENDCAT
-
-# custom core.cfg provided
-else
-    info "Copying '%s' to '%s'" "$GRUB_EARLY_CORE_CFG" "$GRUB_CORE_CFG"
-    cp "$GRUB_EARLY_CORE_CFG" "$GRUB_CORE_CFG"
-fi
-conf_files="$conf_files${NL}$GRUB_CORE_CFG"
-
-
-# build the modules list
-debug "Building modules list for the current host ..."
-
-# devices
-modules_crypto="$($GRUB_PROBE -t abstraction /boot|sort -u|tr '\n' ' '|trim)"
-modules_disk="biosdisk $($GRUB_PROBE -t partmap /boot|sort -u|sed 's/^/part_/g'|tr '\n' ' '|trim)"
-modules_fs="$($GRUB_PROBE -t fs /boot|sort -u|tr '\n' ' '|trim)"
-#modules_usb='fat exfat usb'
-modules_devices="$modules_crypto $modules_disk $modules_fs"
-debug " - modules required by devices: %s" "$modules_devices"
 
 # modules for shell commands
 debug " - config files (to parse): %s" \
     "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g"|trim|tr '\n' ' '|trim)"
-# shellcheck disable=SC2086,SC2046
-modules_cmd="$(for cmd in $(get_command_list "$conf_files"); do get_grub_cmd_modules "$cmd"; done|uniquify)"
-debug " - modules required by commands: %s" "$modules_cmd"
+modules_confs="$(IFS="$NL"; for f in $conf_files; do IFS="$IFS_BAK"; get_manually_loaded_grub_modules_for_file "$f"; echo; done|uniquify -s)"
+debug " - modules required by grub-shell scripts: %s" "$modules_confs"
 
-# modules for gfx menus
-modules_gfxmenu="$(if echo " $modules_cmd "|grep -q ' gfxterm '; then echo 'gfxterm_menu gfxmenu'; fi)"
-if [ "$modules_gfxmenu" != '' ]; then
-    debug " - modules required by gfx menus: %s" "$modules_gfxmenu"
+# extra modules manually added
+if [ "$GRUB_EARLY_ADD_GRUB_MODULES" != '' ]; then
+    debug " - modules extra: %s" "$GRUB_EARLY_ADD_GRUB_MODULES"
 fi
 
-# modules for themes
-modules_theme=
-if bool "$THEME_ENABLED"; then
-    modules_theme="$(get_modules_from_theme_files \
-        "$(find "$GRUB_THEMES_DIR" \( -name "$GRUB_THEME_FILENAME" -o -name "$GRUB_THEME_INNER_FILENAME" \) -printf "%p$NL")" \
+# # modules all merged
+modules="$(echo "$modules_core $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"|uniquify -s)"
+debug " - modules (current host): %s" "$modules"
+
+# if one of the /boot devices has driver 'virtio' and grub modules contains one that disable firmware driver
+if echo "$boot_devices_kernel_drivers"|grep -q 'virtio' \
+&& contains_a_grub_module_that_disable_firmware_driver "$modules"; then
+    first_incompatible_module="$(echo " $modules "|grep -o ' nativedisk\|[aueo]hci\|usbms '\
+                                                  |tr ' ' '\n'|head -n 1|trim)"
+    err_msg="$(printf \
+        "Incompatible grub module requirements between '%s' and disk driver '%s'." \
+        "$first_incompatible_module" 'virtio'
     )"
-    debug " - modules required by themes: %s" "$modules_theme"
+    err_desc="$(printf \
+        "The grub module '%s' prevents using firmware driver (grub module '%s'). That "`
+        `"requires a suitable grub module for disk driver (like 'ahci' for SATA, or 'scsi', "`
+        `"etc.). But there is no grub module for disk driver '%s'. So you will not be able to "`
+        `"access the disk if you use this grub module '%s'.$NL"`
+        `"To solve this issue: configure your KVM virtual Machine to use only SATA disks, "`
+        `"and/or do not use usb devices (prefer PS2 keyboard for example)." \
+        "$first_incompatible_module" 'biosdisk' 'virtio' "$first_incompatible_module"
+    )"
+    warning "${err_msg}${NL}$err_desc"
 fi
-
-# modules all merged
-modules="$(echo "$modules_devices $modules_cmd $modules_gfxmenu $modules_theme"|uniquify)"
-debug " - modules (all merged): %s" "$modules"
 
 # requirements file
 r_file="$GRUB_MEMDISK_DIR${host_prefix}/$GRUB_EARLY_REQUIREMENTS_FILENAME"
@@ -2284,16 +2858,37 @@ if bool "$multi_host_mode"; then
         debug "Getting other hosts modules from requirements files: %s" \
             "$(echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim|tr '\n' ' '|trim)"
         other_hosts_modules="$(
-            IFS="$NL"; for f in $other_hosts_requirements_files; do IFS="$IFS_BAK"; cat -s "$f"|tr '\n' ' '; done|uniquify)"
+            IFS="$NL"; for f in $other_hosts_requirements_files; do \
+                IFS="$IFS_BAK"; cat -s "$f"|tr '\n' ' '; \
+            done|uniquify -s)"
         if [ "$other_hosts_modules" != '' ]; then
             debug "Adding other hosts modules: %s" "$other_hosts_modules"
-            modules="$(echo "$modules $other_hosts_modules"|uniquify)"
+            modules="$(echo "$modules $other_hosts_modules"|uniquify -s)"
             debug "Modules (from all hosts merged): %s" "$modules"
         else
             debug "Empty module list for other hosts"
         fi
     fi
 fi
+
+# building the full list of module dependencies
+modules_with_deps="$(for m in $modules; do get_grub_module_deps "$m"; echo; done|uniquify -s)"
+debug "Modules (all hosts, with deps): %s" "$modules_with_deps"
+
+# copying required modules to modules dir
+modules_dir="$GRUB_MEMDISK_DIR/i386-pc"
+info "Copying required modules to modules dir '%s'" "$modules_dir"
+if [ ! -d "$modules_dir" ]; then
+    # shellcheck disable=SC2174
+    mkdir -m 0700 -p "$modules_dir"
+fi
+for m in $modules_with_deps; do
+    m_path="$GRUB_MODDIR/$m.mod"
+    if [ ! -r "$m_path" ]; then
+        fatal_error "Module '%s' isn't readable or doesn't exist" "$m_path"
+    fi
+    cp "$m_path" "$modules_dir"/
+done
 
 
 # trigger the hook
@@ -2315,9 +2910,17 @@ tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
 
 # create the core.img
 info "Creating core image '%s' ..." "$GRUB_CORE_IMG"
-debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' --format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' --config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' ..modules.."
+debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' --format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' --config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' $modules_core"
 # shellcheck disable=SC2086
-"$GRUB_MKIMAGE" --directory "$GRUB_MODDIR" --output "$GRUB_CORE_IMG" --format "$GRUB_CORE_FORMAT" --compression "$GRUB_CORE_COMPRESSION" --config "$GRUB_CORE_CFG" --memdisk "$GRUB_CORE_MEMDISK" $modules
+"$GRUB_MKIMAGE" \
+    --directory "$GRUB_MODDIR" \
+    --output "$GRUB_CORE_IMG" \
+    --format "$GRUB_CORE_FORMAT" \
+    --compression "$GRUB_CORE_COMPRESSION" \
+    --config "$GRUB_CORE_CFG" \
+    --memdisk "$GRUB_CORE_MEMDISK" \
+    --prefix '(memdisk)' \
+    $modules_core
 debug "Core image size: %s (max is: %s)" "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
 
 # ensure 'boot.img' is installed in grub directory
@@ -2331,7 +2934,11 @@ if ! bool "$opt_noinstall"; then
     info "Installing grub to MBR BIOS of disk '%s' ..." "$device"
     debug "$GRUB_BIOS_SETUP --directory='$GRUB_EARLY_DIR' "'"'"$device"'"'"  $GRUB_INSTALL_ARGS"
     # shellcheck disable=SC2086
-    "$GRUB_BIOS_SETUP" --directory="$GRUB_EARLY_DIR" --device-map="$GRUB_DEVICE_MAP" "$device" $GRUB_EARLY_INSTALL_ARGS
+    "$GRUB_BIOS_SETUP" \
+        --directory="$GRUB_EARLY_DIR" \
+        --device-map="$GRUB_DEVICE_MAP" \
+        "$device" \
+        $GRUB_EARLY_INSTALL_ARGS
 else
     info "Not installing grub to MBR BIOS of disk '%s' (user asked not to)" "$device"
 fi
