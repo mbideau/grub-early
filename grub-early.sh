@@ -32,11 +32,19 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
-# TODO allow to specify a UUID instead of the device to prevent installaing grub
+# TODO allow to specify a UUID instead of the device to prevent installing grub
 #      to random device if their order have changed at reboot time (happens with SATA).
 
 # TODO allow to not use menus
+
 # TODO allow to force booting a specific kernel, only
+
+# TODO allow to "boot-to" a 2nd grub in /boot partition "on-disk"
+#      this will allow to access other boot options, and specially a list of rollbacks
+#      that can be btrfs subvolumes for example.
+#      This should be the fallback menu entry, and the fallback behavior (if no menu).
+#      The "on-disk" grub should on-par with the MBR on (theming mostly). Maybe it
+#      can (re)use the Environment Block to store the day/time mode and theme selected ?
 
 # TODO implement RANDOM_BG_IMAGE
 #   RANDOM_BG_IMAGE
@@ -45,6 +53,36 @@
 #       For each background found, the main theme and inner theme will be copied
 #       with the directive \`desktop-image' replaced by the background file path.
 #       Then it will enable the \`RANDOM_THEME' feature.
+
+# TODO support grub configuration directives:
+#         - GRUB_DEFAULT/GRUB_SAVEDEFAULT
+#           If you set this to ‘saved’, then the default menu entry will be that 
+#           saved by ‘GRUB_SAVEDEFAULT’ or grub-set-default. This relies on the
+#           environment block, which may not be available in all situations (see
+#           Environment block).
+#
+#         - GRUB_EARLY_INITRD_LINUX_CUSTOM
+#           List of space-separated early initrd images to be loaded from ‘/boot’.
+#           These early images will be loaded in the order declared, and all will
+#           be loaded before the actual functional initrd image.
+#
+#         - GRUB_VIDEO_BACKEND
+#           If graphical video support is required, either because the ‘gfxterm’
+#           graphical terminal is in use or because ‘GRUB_GFXPAYLOAD_LINUX’ is set,
+#           then grub-mkconfig will normally load all available GRUB video drivers
+#           and use the one most appropriate for your hardware. If you need to
+#           override this for some reason, then you can set this option. 
+#
+#         - GRUB_DISABLE_SUBMENU
+#           Normally, grub-mkconfig will generate top level menu entry for the kernel
+#           with highest version number and put all other found kernels or alternative
+#           menu entries for recovery mode in submenu.
+#           If this option is set to ‘y’, flat menu with all entries on top level will
+#           be generated instead.
+#
+#         - GRUB_PRELOAD_MODULES
+#           This option may be set to a list of GRUB module names separated by spaces.
+#           Each module will be loaded as early as possible, at the start of grub.cfg. 
 
 
 # halt on first error
@@ -242,6 +280,9 @@ CONFIGURATION
         The same as the "standard" \`GRUB_CMDLINE_LINUX_DEFAULT' option. Default
         to \`$GRUB_EARLY_CMDLINE_LINUX'. If empty, uses the value of the
         \`GRUB_CMDLINE_LINUX_DEFAULT' configuration variable.
+
+    DISABLE_RECOVERY
+        If true, do not generate menu entries for recovery mode.
 
     TIMEOUT
         The number of second to wait before automatically booting the default
@@ -1852,14 +1893,7 @@ fi
 
 # detect all initramfs and kernel
 debug "Detecting bootable kernels ..."
-kernels=
-for l in $(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n"|sort -urV); do
-    # shellcheck disable=SC2001
-    kernel_version="$(echo "$l"|sed 's/^vmlinuz-//')"
-    if [ -f /boot/"initrd.img-$kernel_version" ]; then
-        kernels="$kernels $kernel_version"
-    fi
-done
+kernels="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n"|sort -urV)"
 info "Found kernels: %s" "$(echo "$kernels"|trim)"
 
 # detect required disk UUIDs to unlock /boot
@@ -2189,9 +2223,15 @@ $(for k in $kernels; do
 
         msg 'Loading Linux $k ...'
         linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
-        msg 'Loading intial ram disk ...'
-        initrd /boot/initrd.img-$k
+        
+        if [ -e /boot/initrd.img-$k ]; then
+            msg 'Loading intial ram disk ...'
+            initrd /boot/initrd.img-$k
+        fi
     }
+ENDCAT
+    if ! bool "$GRUB_DISABLE_RECOVERY" && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
+        cat <<ENDCAT
     menuentry '$k_title_rec' --class recovery $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {
         #set color_normal=light-gray/black
         #set color_highlight=dark-gray/black
@@ -2209,8 +2249,11 @@ $(for k in $kernels; do
 
         msg 'Loading Linux $k ...'
         linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro single
-        msg 'Loading intial ram disk ...'
-        initrd /boot/initrd.img-$k
+
+        if [ -e /boot/initrd.img-$k ]; then
+            msg 'Loading intial ram disk ...'
+            initrd /boot/initrd.img-$k
+        fi
     }
 ENDCAT
 done)
