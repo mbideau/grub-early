@@ -129,6 +129,7 @@ GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE='Kernels'
 GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
 GRUB_EARLY_KERNEL_SUBLENUS_TITLE='GNU/Linux %s'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
+GRUB_EARLY_PRELOAD_MODULES=
 
 # internal const
 NL="
@@ -462,6 +463,13 @@ CONFIGURATION
         If true, will truncate MACHINE_UUID that identifies the host when in
         multi-hosts mode. It will truncate at the first underscore '_', then
         will use the first 16 characters.
+
+    PRELOAD_MODULES
+        The same as the "standard" \`GRUB_PRELOAD_MODULES' option.
+        This option may be set to a list of GRUB module names separated by spaces.
+        Each module will be loaded as early as possible, at the start of grub.cfg. 
+        Default to \`$GRUB_EARLY_PRELOAD_MODULES'. If empty, uses the value
+        of the \`GRUB_PRELOAD_MODULES' configuration variable.
 
     ADD_GRUB_MODULES
         A space separated list of grub modules that need to be added (copied)
@@ -1504,6 +1512,10 @@ if [ "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES" = '' ]; then
 fi
 if [ "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" = '' ]; then
     GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBLENUS_TITLE (recovery)"
+fi
+if [ "$GRUB_EARLY_PRELOAD_MODULES" = '' ]; then
+    debug "PRELOAD_MODULES: %s" "$GRUB_PRELOAD_MODULES"
+    GRUB_EARLY_PRELOAD_MODULES="$GRUB_PRELOAD_MODULES"
 fi
 
 # day/night mode
@@ -3034,8 +3046,8 @@ if [ "$GRUB_EARLY_ADD_GRUB_MODULES" != '' ]; then
     debug " - modules extra: %s" "$GRUB_EARLY_ADD_GRUB_MODULES"
 fi
 
-# # modules all merged
-modules="$(echo "$modules_core $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"\
+# modules all merged
+modules="$(echo "$modules_core $GRUB_EARLY_PRELOAD_MODULES $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"\
           |uniquify -s)"
 debug " - modules (current host): %s" "$modules"
 
@@ -3130,7 +3142,8 @@ tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
 info "Creating core image '%s' ..." "$GRUB_CORE_IMG"
 debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' "`
       `"--format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' "`
-      `"--config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' $modules_core"
+      `"--config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' "`
+      `"$modules_core $GRUB_EARLY_PRELOAD_MODULES"
 # shellcheck disable=SC2086
 "$GRUB_MKIMAGE" \
     --directory "$GRUB_MODDIR" \
@@ -3140,7 +3153,7 @@ debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG
     --config "$GRUB_CORE_CFG" \
     --memdisk "$GRUB_CORE_MEMDISK" \
     --prefix '(memdisk)' \
-    $modules_core
+    $modules_core $GRUB_EARLY_PRELOAD_MODULES
 debug "Core image size: %s (max is: %s)" \
     "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
 
