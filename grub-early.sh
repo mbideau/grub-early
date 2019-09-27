@@ -32,9 +32,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
-# TODO allow to specify a UUID instead of the device to prevent installing grub
-#      to random device if their order have changed at reboot time (happens with SATA).
-
 # TODO allow to not use menus
 
 # TODO allow to force booting a specific kernel, only
@@ -183,6 +180,11 @@ ARGUMENTS
 
     DEVICE
         Path to a device (i.e.: /dev/sdx).
+        It can also be one of the following:
+         - device name       (NAME   in \`lsblk')
+         - device model      (MODEL  in \`lsblk')
+         - device serial     (SERIAL in \`lsblk')
+         - device storage id (WWN    in \`lsblk')
 
 OPTIONS
 
@@ -211,8 +213,15 @@ OPTIONS
     -m|--multi-hosts
         Force the multi host mode, even if no option '--other-hosts'.
 
-    -u|--uuid UUID
+    -i|--host-id ID
         Force/use this value as this host unique identifier (HOST_ID).
+
+    -p|--part-uuid
+        The device where grub will be installed to is the "top level" device
+        that have the specified partition UUID in its "children" devices.
+        With this flag, you specify the partition UUID as the "device" argument.
+        This option is usefull to prevent installing to a bad device if their
+        order has changed at boot (/dev/sda becoming /dev/sdb for example).
 
 
 FILES
@@ -1003,18 +1012,24 @@ get_grub_modules_deps_for_line()
     done|uniquify -s
 }
 
-# get the top level parent device of specified device
+# get the top level parent device of specified device path
+#  $1  string  the device path
+#  $2  string  (optional) the type of return value: name|path. Default: name
 get_top_level_parent_device()
 {
-    toplvldisk=$(lsblk --inverse --ascii --noheading --output 'NAME' "$1" \
-                |sed 's/^[[:blank:]]*`-//g' \
-                |cat -s \
-                |tail -n 1)
-    if [ "$toplvldisk" = '' ]; then
-        fatal_error "Top level disk name not found for device '$1' (not a device?)" >&2
+    key="$(if [ "$2" = 'path' ]; then echo 'PATH'; else echo 'NAME'; fi)"
+    toplvldisks=$(lsblk --inverse --ascii --noheading --output "$key" "$1" 2>/dev/null \
+                 |sed 's/^[[:blank:]]*`-//g' \
+                 |cat -s)
+    if [ "$toplvldisks" = '' ]; then
+        fatal_error "Top level device %s not found for device path '%s' (not a device?)" "$key" "$1"
         return $FALSE
     fi
-    echo "$toplvldisk"
+    if [ "$key" = 'PATH' ]; then
+        echo "$toplvldisks"|head -n 1
+    else
+        echo "$toplvldisks"|tail -n 1
+    fi
     return $TRUE
 }
 
@@ -1305,8 +1320,8 @@ contains_a_grub_module_that_disable_firmware_driver()
 # options definition
 # using GNU getopt here, install it if not the default on your distro
 options_definition="$( \
-    getopt --options hv:c:no:mu: \
-           --longoptions help,verbosity:,config:,no-install,other-hosts:,multi-hosts,uuid: \
+    getopt --options hv:c:no:mi:p \
+           --longoptions help,verbosity:,config:,no-install,other-hosts:,multi-hosts,host-id,dev-from-child-part-uuid \
            --name "$THIS_SCRIPT_NAME" \
            -- "$@")"
 if [ "$options_definition" = '' ]; then
@@ -1321,7 +1336,8 @@ config=$GRUB_CONFIG_DEFAULT
 opt_noinstall=false
 opt_other_hosts=
 opt_multi_hosts=false
-opt_uuid=
+opt_host_id=
+opt_part_uuid=false
 while true; do
     case "$1" in
         -h | --help        ) opt_help=true        ; shift   ;;
@@ -1330,7 +1346,8 @@ while true; do
         -n | --no-install  ) opt_noinstall=true   ; shift ;;
         -o | --other-hosts ) opt_other_hosts=$2   ; shift 2 ;;
         -m | --multi-hosts ) opt_multi_hosts=true ; shift ;;
-        -u | --uuid        ) opt_uuid=$2          ; shift 2 ;;
+        -i | --host-id     ) opt_host_id=$2       ; shift 2 ;;
+        -p | --part-uuid   ) opt_part_uuid=true   ; shift ;;
         -- ) shift; break ;;
         * ) break ;;
     esac
@@ -1353,9 +1370,40 @@ if [ "$1" != "" ]; then
 else
     fatal_error "no device specified"
 fi
-if [ "$(lsblk "$device" >/dev/null; echo $?)" != '0' ]; then
-    fatal_error "invalid device '%s'" "$device"
+
+# partition UUID option
+if bool "$opt_part_uuid"; then
+    debug "Device child partition UUID: %s" "$device"
+    part_dev="$(lsblk --list --output "PATH,UUID"|grep "^[^ ]\\+ \\+$device\$"|awk '{print $1}'|trim||true)"
+    debug "Device child partition PATH: %s" "$part_dev"
+    if [ "$part_dev" = '' ]; then
+        fatal_error "Device with partition UUID '%s' not found" "$device"
+    fi
+    device="$(get_top_level_parent_device "$part_dev" 'path')"
+    debug "Found top level device: %s" "$device"
 fi
+
+# not a device full path
+if ! lsblk "$device" >/dev/null 2>&1; then
+    dev_found=false
+    for key in NAME MODEL SERIAL WWN; do
+        if lsblk --list --output "$key"|grep -q "^$device\$"; then
+            devices="$(lsblk --list --output "PATH,$key"|grep "^[^ ]\\+ \\+$device\$"|awk '{print $1}'|trim)"
+            if [ "$(echo "$devices"|wc -l)" -gt 1 ]; then
+                fatal_error "Found multiple device for %s '%s'" "$key" "$device"
+            fi
+            device="$devices"
+            debug "Found device by %s: %s" "$key" "$device"
+            dev_found=true
+        fi
+    done
+    # unkown
+    if ! bool "$dev_found"; then
+        fatal_error "invalid device '%s'" "$device"
+    fi
+fi
+debug "Device: %s" "$device"
+
 
 # setup the hostname
 HOSTNAME="$(hostname)"
@@ -1607,11 +1655,11 @@ if bool "$multi_host_mode"; then
     info "Multi-host mode enabled"
 
     # build a unique host identifier
-    if [ "$opt_uuid" = '' ]; then
+    if [ "$opt_host_id" = '' ]; then
         MACHINE_UUID="$(get_machine_uuid)"
         HOST_ID="${HOSTNAME}_$MACHINE_UUID"
     else
-        HOST_ID="$opt_uuid"
+        HOST_ID="$opt_host_id"
     fi
     debug "HOST_ID: %s" "$HOST_ID"
 
@@ -2256,6 +2304,7 @@ ENDCAT
         fi
     }
 ENDCAT
+    fi
 done)
 }
 "
