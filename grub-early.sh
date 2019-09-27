@@ -32,10 +32,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
-# TODO allow to not use menus
-
-# TODO allow to force booting a specific kernel, only
-
 # TODO allow to "boot-to" a 2nd grub in /boot partition "on-disk"
 #      this will allow to access other boot options, and specially a list of rollbacks
 #      that can be btrfs subvolumes for example.
@@ -70,16 +66,11 @@
 #           and use the one most appropriate for your hardware. If you need to
 #           override this for some reason, then you can set this option. 
 #
-#         - GRUB_DISABLE_SUBMENU
-#           Normally, grub-mkconfig will generate top level menu entry for the kernel
-#           with highest version number and put all other found kernels or alternative
-#           menu entries for recovery mode in submenu.
-#           If this option is set to ‘y’, flat menu with all entries on top level will
-#           be generated instead.
-#
 #         - GRUB_PRELOAD_MODULES
 #           This option may be set to a list of GRUB module names separated by spaces.
 #           Each module will be loaded as early as possible, at the start of grub.cfg. 
+
+# TODO handle to set color_normal and color_highlight for each kernel menu entry
 
 
 # halt on first error
@@ -133,6 +124,7 @@ GRUB_EARLY_GFXMODE=auto
 GRUB_EARLY_GFXPAYLOAD=keep
 GRUB_EARLY_RANDOM_THEME=false
 GRUB_EARLY_WRAPPER_SUBMENU_CLASSES='default'
+GRUB_EARLY_DISABLE_SUBMENU=false
 GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE='Kernels'
 GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
 GRUB_EARLY_KERNEL_SUBLENUS_TITLE='GNU/Linux %s'
@@ -290,6 +282,11 @@ CONFIGURATION
         to \`$GRUB_EARLY_CMDLINE_LINUX'. If empty, uses the value of the
         \`GRUB_CMDLINE_LINUX_DEFAULT' configuration variable.
 
+    SINGLE_KERNEL
+        The value of a kernel file in /boot (i.e.: 'vmlinuz-4.19.0-4-amd64').
+        Only this kernel will be considered (only this one entry for kernels).
+        No detection of other kernels.
+
     DISABLE_RECOVERY
         If true, do not generate menu entries for recovery mode.
 
@@ -366,19 +363,14 @@ CONFIGURATION
         The name of the default theme if there are multiple themes in the
         themes directory \`THEMES_DIR'. Else it default to the one found.
     
-    WRAP_IN_SUBMENU
-        If not empty, will wrap all the menu/submenu entries inside one
-        submenu entries which title is the value of this option.
-        It will have the class 'default'.
-        It is intended to help having a cleaner theme and display with only
-        one entry instead of dosens. So by default the booting splash will be
-        more elegant. And with the help of inner theme, when entering this
-        submenu it will have a theme that is made for multiple menu entries.
-        So no feature loss and better looking.
+    NO_MENU
+        If true, will not use any menu entry.
 
-    WRAPPER_SUBMENU_CLASSES
-        The classes of the wrapper submenu. Separated by comma.
-        Default to: \`$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES'
+    DISABLE_SUBMENU
+        The same as the "standard" \`GRUB_DISABLE_SUBMENU' option.
+        It will disable wraping all the kernel menu entries into one submenu.
+        Default to \`$GRUB_EARLY_DISABLE_SUBMENU'. If empty, uses the value
+        of the \`GRUB_DISABLE_SUBMENU' configuration variable.
 
     KERNEL_WRAPPER_SUBMENU_TITLE
         The title of the kernel wrapper submenu.
@@ -401,6 +393,20 @@ CONFIGURATION
         The title of the kernel submenus for recovery mode.
         First '%s' match, will be replaced by the kernel version (with printf).
         Default to: \`\$GRUB_EARLY_KERNEL_SUBLENUS_TITLE (recovery)'.
+
+    WRAP_IN_SUBMENU
+        If not empty, will wrap all the menu/submenu entries inside one
+        submenu entries which title is the value of this option.
+        It will have the class 'default'.
+        It is intended to help having a cleaner theme and display with only
+        one entry instead of dosens. So by default the booting splash will be
+        more elegant. And with the help of inner theme, when entering this
+        submenu it will have a theme that is made for multiple menu entries.
+        So no feature loss and better looking.
+
+    WRAPPER_SUBMENU_CLASSES
+        The classes of the wrapper submenu. Separated by comma.
+        Default to: \`$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES'
 
     RANDOM_THEME
         If true, will use a theme randomly.
@@ -767,8 +773,11 @@ uniquify()
 # return format is '--class class1 --class class2'
 get_menu_entry_classes()
 {
-    echo "$1"|grep -o '\(menuentry\|submenu\).*'|head -n 1\
-             |sed  's/^\(menuentry\|submenu\) \+'"'"'[^'"'"']\+'"'"' *\(\( \+--class \+[^ ]\+\)\+\)* \+--id.*$/\2/'|trim
+    echo "$1"|grep -o '\(menuentry\|submenu\).*' \
+             |head -n 1 \
+             |sed  's/^\(menuentry\|submenu\) \+'"'"'[^'"'"']\+'"'"' '`
+                   `'*\(\( \+--class \+[^ ]\+\)\+\)* \+--id.*$/\2/' \
+             |trim
 }
 
 # list all grub modules requirements for a file (parse 'insmod MODULE')
@@ -854,18 +863,22 @@ get_command_list_for_line()
         fi
 
         # special case for disks mentions
-        if echo "$line"|grep -q '([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+\(,[^)]\+\)\?\)[[:blank:]]*)'; then
+        if echo "$line"|grep -q '([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+'`
+                                `'\(,[^)]\+\)\?\)[[:blank:]]*)'; then
             cmds="$cmds $cmd"
             disk="$(echo "$line" \
-                    |sed -e 's/^.*([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+\(,[^)]\+\)\?\)[[:blank:]]*).*$/\1/g' \
+                    |sed -e 's/^.*([[:blank:]]*\(memdisk\|proc\|\(hd\|ahci\|p\?ata\|scsi\)[0-9]\+'`
+                            `'\(,[^)]\+\)\?\)[[:blank:]]*).*$/\1/g' \
                          -e 's/ //g')"
             cmd="disk($disk)"
         fi
 
         # special case for datehook variables
-        if echo "$line"|grep -q '["'"'"']\?$\(SECOND\|MINUTE\|HOUR\|DAY\|MONTH\|YEAR\)["'"'"']\?'; then
+        if echo "$line"|grep -q '["'"'"']\?$\(SECOND\|MINUTE\|HOUR'`
+                                `'\|DAY\|MONTH\|YEAR\)["'"'"']\?'; then
             cmds="$cmds $cmd"
-            var="$(echo "$line"|sed 's/^.*["'"'"']\?$\(SECOND\|MINUTE\|HOUR\|DAY\|MONTH\|YEAR\)["'"'"']\?.*$/\1/g')"
+            var="$(echo "$line"|sed 's/^.*["'"'"']\?$\(SECOND\|MINUTE\|HOUR'`
+                                    `'\|DAY\|MONTH\|YEAR\)["'"'"']\?.*$/\1/g')"
             cmd="var($var)"
         fi
         cmds="$cmds $cmd"
@@ -1102,7 +1115,9 @@ select_random_theme()
     if [ "$themes_count" -eq 7 ] \
     || [ "$themes_count" -eq 8 ] \
     || [ "$themes_count" -eq 9 ]; then
-        fatal_error "Invalid number of themes (can't be '%s', needs to be a divider of 60, because randomness is based on seconds). Tips: remove themes to get to 6 or add some to get to 10"
+        fatal_error "Invalid number of themes (can't be '%s', needs to be a divider of 60, "`
+                    `"because randomness is based on seconds). Tips: remove themes to get to 6 "`
+                    `"or add some to get to 10"
     elif [ "$themes_count" -gt 10 ]; then
         fatal_error "Invalid number of themes (can't be '%s', maximum allowed is 10)"
     fi
@@ -1128,8 +1143,10 @@ set_term_background_color()
     t_count=0
     for t in $1; do
         t_path="$GRUB_THEMES_DIR/$t/$GRUB_THEME_FILENAME"
-        t_bgcolor="$(grep '^[[:space:]]*#\?[[:space:]]*desktop-color[[:space:]]*:[[:space:]]*"[^"]\+"' "$t_path" \
-                    |sed 's/^[[:blank:]]*#\?[[:blank:]]*desktop-color[[:blank:]]*:[[:blank:]]*"\([^"]\+\)"/\1/'||true)"
+        t_bgcolor="$(grep '^[[:blank:]]*#\?[[:blank:]]*desktop-color'`
+                          `'[[:blank:]]*:[[:blank:]]*"[^"]\+"' "$t_path" \
+                    |sed 's/^[[:blank:]]*#\?[[:blank:]]*desktop-color'`
+                         `'[[:blank:]]*:[[:blank:]]*"\([^"]\+\)"/\1/'||true)"
         if [ "$t_bgcolor" != '' ]; then
             t_cond="$(if [ "$t_count" -eq 0 ]; then echo 'if'; else echo 'elif'; fi)"
             t_count="$((t_count + 1))"
@@ -1151,7 +1168,9 @@ load_theme_modules()
     t_count=0
     for t in $1; do
         modules_theme="$(get_modules_from_theme_files \
-            "$(find "$GRUB_THEMES_DIR/$t" \( -name "$GRUB_THEME_FILENAME" -o -name "$GRUB_THEME_INNER_FILENAME" \) -printf "%p$NL")" \
+            "$(find "$GRUB_THEMES_DIR/$t" \( -name "$GRUB_THEME_FILENAME" \
+                                          -o -name "$GRUB_THEME_INNER_FILENAME" \) \
+                                          -printf "%p$NL")" \
         )"
         t_cond="$(if [ "$t_count" -eq 0 ]; then echo 'if'; else echo 'elif'; fi)"
         t_count="$((t_count + 1))"
@@ -1173,7 +1192,8 @@ check_opt_other_hosts()
         return $TRUE
     fi
     echo "$opt_other_hosts" \
-       | grep -q "^${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}\\(|${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}\\)*$"
+       | grep -q "^${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}"`
+                 `"\\(|${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}\\)*$"
 }
 
 # get machine UUID to uniquely identify the host
@@ -1210,7 +1230,8 @@ get_modules_from_theme_files()
     for f in $1; do
         IFS="$IFS_BAK"
         if [ -r "$f" ]; then
-            if grep -q '^[[:blank:]]*+[[:blank:]]*\(progress_bar\|circular_progress\)[[:blank:]]*\({\|$\)' "$f"; then
+            if grep -q '^[[:blank:]]*+[[:blank:]]*\(progress_bar\|circular_progress\)'`
+                       `'[[:blank:]]*\({\|$\)' "$f"; then
                 t_modules="$t_modules progress"
             fi
             if grep -q -i '^[^#]\+\.png["'"'"']\?$' "$f"; then
@@ -1256,7 +1277,8 @@ detect_usb_keyboards()
     grep -l '^01$' /sys/bus/usb/drivers/*/*/bInterfaceProtocol 2>/dev/null|while read -r h_ip; do
         usb_driver_dir="$(dirname "$h_ip")"
         usb_driver_dirname="$(basename "$usb_driver_dir")"
-        find "$usb_driver_dir/" -maxdepth 1 -not -path "$usb_driver_dir/" -type d|while read -r dev; do
+        find "$usb_driver_dir/" -maxdepth 1 -not -path "$usb_driver_dir/" -type d \
+        |while read -r dev; do
             if [ -d "$dev"/input ]; then
                 find "$dev/input" -maxdepth 1 -not -path "$dev" -type d|while read -r input; do
                     dev_name='unknown'
@@ -1321,7 +1343,8 @@ contains_a_grub_module_that_disable_firmware_driver()
 # using GNU getopt here, install it if not the default on your distro
 options_definition="$( \
     getopt --options hv:c:no:mi:p \
-           --longoptions help,verbosity:,config:,no-install,other-hosts:,multi-hosts,host-id,dev-from-child-part-uuid \
+           --longoptions 'help,verbosity:,config:,no-install,other-hosts:,'`
+                         `'multi-hosts,host-id,dev-from-child-part-uuid' \
            --name "$THIS_SCRIPT_NAME" \
            -- "$@")"
 if [ "$options_definition" = '' ]; then
@@ -1374,7 +1397,8 @@ fi
 # partition UUID option
 if bool "$opt_part_uuid"; then
     debug "Device child partition UUID: %s" "$device"
-    part_dev="$(lsblk --list --output "PATH,UUID"|grep "^[^ ]\\+ \\+$device\$"|awk '{print $1}'|trim||true)"
+    part_dev="$(lsblk --list --output "PATH,UUID"|grep "^[^ ]\\+ \\+$device\$" \
+                                                 |awk '{print $1}'|trim||true)"
     debug "Device child partition PATH: %s" "$part_dev"
     if [ "$part_dev" = '' ]; then
         fatal_error "Device with partition UUID '%s' not found" "$device"
@@ -1388,7 +1412,8 @@ if ! lsblk "$device" >/dev/null 2>&1; then
     dev_found=false
     for key in NAME MODEL SERIAL WWN; do
         if lsblk --list --output "$key"|grep -q "^$device\$"; then
-            devices="$(lsblk --list --output "PATH,$key"|grep "^[^ ]\\+ \\+$device\$"|awk '{print $1}'|trim)"
+            devices="$(lsblk --list --output "PATH,$key"|grep "^[^ ]\\+ \\+$device\$" \
+                                                        |awk '{print $1}'|trim)"
             if [ "$(echo "$devices"|wc -l)" -gt 1 ]; then
                 fatal_error "Found multiple device for %s '%s'" "$key" "$device"
             fi
@@ -1464,6 +1489,10 @@ fi
 if [ "$GRUB_EARLY_GFXPAYLOAD" = '' ]; then
     debug "GFXPAYLOAD: %s" "$GRUB_GFXPAYLOAD_LINUX"
     GRUB_EARLY_GFXPAYLOAD="$GRUB_GFXPAYLOAD_LINUX"
+fi
+if [ "$GRUB_EARLY_DISABLE_SUBMENU" = '' ]; then
+    debug "DISABLE_SUBMENU: %s" "$GRUB_DISABLE_SUBMENU"
+    GRUB_EARLY_DISABLE_SUBMENU="$GRUB_DISABLE_SUBMENU"
 fi
 if [ "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES" = '' ]; then
     GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES="wrapper"
@@ -1564,7 +1593,8 @@ for s in $var_suffixes; do
             for t in $themes_names; do
                 IFS="$IFS_BAK"
                 if printf '%s' "$t"|grep -q '[[:blank:]]'; then
-                    fatal_error "Invalid theme name '%s' (must not contain space/tab character) from '%s'" "$t" "$d/$t"
+                    fatal_error "Invalid theme name '%s' "`
+                                `"(must not contain space/tab character) from '%s'" "$t" "$d/$t"
                 fi
             done
 
@@ -1597,7 +1627,8 @@ if bool "$day_night_mode"; then
     # theming must be enabled for both modes
     if bool "$THEME_ENABLED_DAY" && ! bool "$THEME_ENABLED_NIGHT" \
     || ! bool "$THEME_ENABLED_DAY" && bool "$THEME_ENABLED_NIGHT"; then
-        fatal_error "It cannot have a situation where theming is enabled at DAY time but not at NIGHT time, or the opposite"
+        fatal_error "It cannot have a situation where theming is enabled at DAY time "`
+                    `"but not at NIGHT time, or the opposite"
     else
         THEME_ENABLED=true
     fi
@@ -1670,7 +1701,9 @@ if bool "$multi_host_mode"; then
         opt_other_hosts="$(echo "$opt_other_hosts"|tr '|' '\n'|trim)"
 
         # exclude current host from other hosts, and blank lines too
-        opt_other_hosts="$(echo "$opt_other_hosts"|grep -v "^[[:blank:]]*${HOST_ID}[[:blank:]]*:[[:blank:]]*"|grep -v '^[[:blank:]]*$')"
+        opt_other_hosts="$(echo "$opt_other_hosts" \
+                          |grep -v "^[[:blank:]]*${HOST_ID}[[:blank:]]*:[[:blank:]]*" \
+                          |grep -v '^[[:blank:]]*$')"
 
         # collect hosts name/IDs
         other_hosts="$(echo "$opt_other_hosts"|awk -F ':' '{print $1}'|trim)"
@@ -1725,7 +1758,8 @@ if bool "$multi_host_mode"; then
 
             # archive do not exist or is not readable
             if [ ! -r "$other_host_archive" ]; then
-                fatal_error "Host '%s' archive file '%s' doesn't exist nor is readable" "$other_host_id" "$other_host_archive"
+                fatal_error "Host '%s' archive file '%s' doesn't exist "`
+                            `"nor is readable" "$other_host_id" "$other_host_archive"
             fi
 
             # extract the files
@@ -1742,12 +1776,14 @@ if bool "$multi_host_mode"; then
                 # check that file exists and is readable
                 host_file="$tmparc/$fn"
                 if [ ! -r "$host_file" ]; then
-                    fatal_error "Required host '%s' file '%s' doesn't exist nor is readable" "$other_host_id" "$host_file"
+                    fatal_error "Required host '%s' file '%s' doesn't exist "`
+                                `"nor is readable" "$other_host_id" "$host_file"
                 fi
             done
 
             # remove existing host dir
-            if [ -d "$GRUB_MEMDISK_DIR"/"$other_host_id" ] && [ "$GRUB_MEMDISK_DIR/$other_host_id" != '/' ]; then
+            if [ -d "$GRUB_MEMDISK_DIR"/"$other_host_id" ] \
+            && [ "$GRUB_MEMDISK_DIR/$other_host_id" != '/' ]; then
                 debug "     removing current host dir '%s'" "$GRUB_MEMDISK_DIR/$other_host_id"
                 # shellcheck disable=SC2115
                 rm -fr "$GRUB_MEMDISK_DIR"/"$other_host_id"
@@ -1818,7 +1854,10 @@ fi
 debug "Building 'preloaded' grub modules list for the current host ..."
 
 # modules for core.cfg
-modules_core="$(for cmd in $(get_command_list "$GRUB_CORE_CFG"); do get_cmd_grub_modules "$cmd"; done|uniquify -s)"
+modules_core="$(
+    for cmd in $(get_command_list "$GRUB_CORE_CFG"); do
+        get_cmd_grub_modules "$cmd"
+    done|uniquify -s)"
 debug " - modules for %s: %s" "$(basename "$GRUB_CORE_CFG")" "$modules_core"
 
 
@@ -1896,7 +1935,8 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
 
                     # copy default (first) theme
                     if [ ! -d "$GRUB_THEMES_DIR/$default_theme" ]; then
-                        info "Copying default theme$var_text '%s' to '%s'" "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
+                        info "Copying default theme$var_text '%s' to '%s'" \
+                            "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
                         cp -r "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
                     fi
 
@@ -1904,7 +1944,8 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
                     eval 'ALL_THEME_NAMES'"$var_suffix"'="$default_theme"'
 
                 else
-                    debug "Default theme$var_text '%s' is excluded by user demand (%s)" "$default_theme" "GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT$var_suffix"
+                    debug "Default theme$var_text '%s' is excluded by user demand (%s)" \
+                        "$default_theme" "GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT$var_suffix"
 
                     # update theme names
                     eval 'ALL_THEME_NAMES'"$var_suffix"'='
@@ -1917,7 +1958,8 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
                     t_path="$GRUB_THEMES_DIR/$t_name"
                     debug " - %s" "$t_name"
                     cp -r "$theme_dir_src/$default_theme" "$t_path"
-                    sed_cmd='s/^[[:blank:]]*#\?\([[:blank:]]*desktop-color[[:blank:]]*:[[:blank:]]*\)"[^"]\+"/\1"'"$c"'"/g'
+                    sed_cmd='s/^[[:blank:]]*#\?\([[:blank:]]*desktop-color'`
+                            `'[[:blank:]]*:[[:blank:]]*\)"[^"]\+"/\1"'"$c"'"/g'
                     sed "$sed_cmd" -i "$t_path/$GRUB_THEME_FILENAME"
                     if [ -w "$t_path/$GRUB_THEME_INNER_FILENAME" ]; then
                         sed "$sed_cmd" -i "$t_path/$GRUB_THEME_INNER_FILENAME"
@@ -1925,7 +1967,8 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
                     eval 'ALL_THEME_NAMES'"$var_suffix"'="$ALL_THEME_NAMES'"$var_suffix"' $t_name"'
                 done
 
-                debug "Theme names$var_text updated: %s" "$(eval 'echo "$ALL_THEME_NAMES'"$var_suffix"'"'|trim)"
+                debug "Theme names$var_text updated: %s" \
+                    "$(eval 'echo "$ALL_THEME_NAMES'"$var_suffix"'"'|trim)"
             fi
         done
     fi
@@ -1939,10 +1982,25 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
 #     fi
 fi
 
+# kernel entry specified by user
+if [ "$GRUB_EARLY_SINGLE_KERNEL" != '' ]; then
+    kernels="$GRUB_EARLY_SINGLE_KERNEL"
+    info "User specified kernel: %s" "$kernels"
+
 # detect all initramfs and kernel
-debug "Detecting bootable kernels ..."
-kernels="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n"|sort -urV)"
-info "Found kernels: %s" "$(echo "$kernels"|trim)"
+else
+    debug "Detecting bootable kernels ..."
+    kernels="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n" \
+              |sed 's/^vmlinuz-//g'|sort -urV)"
+    info "Found kernel(s): %s" "$(echo "$kernels"|trim)"
+fi
+
+# NO_MENU option and kernel not specified by user and multiple kernels found
+if bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_SINGLE_KERNEL" = '' ] \
+&& [ "$(echo "$kernels"|wc -l)" -gt 1 ]; then
+    kernels="$(echo "$kernels"|head -n 1)"
+    warning "Will only use the first kernel found: '%s' (because of option: %s)" "$kernels" 'NO_MENU'
+fi
 
 # detect required disk UUIDs to unlock /boot
 debug "Detecting required disk UUIDs to unlock /boot ..."
@@ -1988,7 +2046,8 @@ for d in $($GRUB_PROBE -t device /boot); do
         pci_register="$(echo "$k"|awk -F ':' '{print $2}')"
         pci_value="$(setpci -s "$pci_bus" "$pci_register"|sed 's/^0*//g')"
         if [ "$pci_value" != '' ]; then
-            pci_var="$(echo "${HOST_ID}_${toplvldisk}"|tr '[:lower:]' '[:upper:]')_$(echo "$k"|awk -F ':' '{print $1}')"
+            pci_var="$(echo "${HOST_ID}_${toplvldisk}"|tr '[:lower:]' '[:upper:]')_$(echo "$k" \
+                      |awk -F ':' '{print $1}')"
             pci_var_set="$pci_set -v $pci_var $pci_register"
             pci_id_condition='"$'"$pci_var"'" = '"'$pci_value'"
             pci_vars="$(printf '%s\n%s' "$pci_vars" "$pci_var_set")"
@@ -1997,7 +2056,8 @@ for d in $($GRUB_PROBE -t device /boot); do
         fi
     done
     pci_id_conditions="$(echo "$pci_id_conditions"|sed 's/^ *-a *//g')"
-    pci_devices_var_set="$(printf '%s\n\n%s%s%s' "$pci_devices_var_set" "# PCI variables for ($HOST_ID)$d" "$pci_vars" "$pci_exports"|tail -n +2)"
+    pci_devices_var_set="$(printf '%s\n\n%s%s%s' "$pci_devices_var_set" \
+                            "# PCI variables for ($HOST_ID)$d" "$pci_vars" "$pci_exports"|tail -n +2)"
     pci_devices_id_functions="$(echo "$pci_devices_id_functions -a $pci_id_conditions"|sed 's/^ -a //g')"
 done
 
@@ -2031,7 +2091,9 @@ debug "Detecting keyboards grub modules"
 
 if bool "$GRUB_EARLY_NO_USB_KEYBOARD" && bool "$GRUB_EARLY_NO_PS2_KEYBOARD" \
 && [ "$GRUB_EARLY_KEYMAP" != '' ]; then
-    fatal_error "You cannot have keymap '%s' and no 'at_keyboard' and no 'usb_keyboard' grub modules (because they are the only one which support keylayouts)." "$GRUB_EARLY_KEYMAP"
+    fatal_error "You cannot have keymap '%s' and no 'at_keyboard' and no 'usb_keyboard' "`
+                `"grub modules (because they are the only one which support keylayouts)." \
+                "$GRUB_EARLY_KEYMAP"
 fi
 
 # if ps2 keyboards were detected
@@ -2089,9 +2151,12 @@ if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards";
 
     # if one of the /boot devices has driver 'virtio'
     if echo "$boot_devices_kernel_drivers"|grep -q 'virtio'; then
-        first_incompatible_kbd="$(echo "$mapping_usb_keyboards_grub_module"|grep '^[ueo]hci\|^usbms'|head -n 1)"
-        first_incompatible_kbd_module="$(echo "$first_incompatible_kbd"|awk -F '|' '{print $1}'|trim)"
-        first_incompatible_kbd_name="$(echo "$first_incompatible_kbd"|awk -F '|' '{print $2}'|trim)"
+        first_incompatible_kbd="$(echo "$mapping_usb_keyboards_grub_module" \
+                                 |grep '^[ueo]hci\|^usbms'|head -n 1)"
+        first_incompatible_kbd_module="$(echo "$first_incompatible_kbd" \
+                                        |awk -F '|' '{print $1}'|trim)"
+        first_incompatible_kbd_name="$(echo "$first_incompatible_kbd" \
+                                      |awk -F '|' '{print $2}'|trim)"
         err_msg="$(printf \
             "Incompatible grub module requirements between usb keyboard driver '%s' and "`
             `"disk driver '%s'." \
@@ -2162,7 +2227,8 @@ if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards";
     # disable biodisk when using disk drivers
     modules_disks=
 fi 
-modules_disks="$modules_disks $($GRUB_PROBE -t partmap /boot|sed 's/^/part_/g'|uniquify --to-sep-space)"
+modules_disks="$modules_disks $($GRUB_PROBE -t partmap /boot|sed 's/^/part_/g' \
+                                                            |uniquify --to-sep-space)"
 modules_fs="$($GRUB_PROBE -t fs /boot|uniquify --to-sep-space)"
 modules_devices="$modules_crypto $modules_disks $modules_fs"
 debug "Found: %s" "$modules_devices"
@@ -2174,7 +2240,7 @@ if [ -z "$GRUB_EARLY_NORMAL_CFG" ]; then
     GRUB_SUBMENU_GFXCONF=
 
     # gfxterm is not disabled
-    if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
+    if ! bool "$GRUB_EARLY_NO_GFXTERM" && ! bool "$GRUB_EARLY_NO_MENU"; then
         GRUB_SUBMENU_GFXCONF="
 # enter gfx rendering mode
 submenu_gfxmode"
@@ -2236,80 +2302,106 @@ fi"|indent "$keyboard_indent")")"
 fi"
         fi
     fi
+
+    # build kernel menu entries
+    GRUB_MENUS_ENTRIES_KERNELS=
+
+    # menu are enabled
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+
+        # load submenus modules
+        if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" = '' ] && ! bool "$GRUB_EARLY_NO_GFXTERM"; then
+            GRUB_MENUS_ENTRIES_KERNELS="
+insmod gfxterm_menu
+insmod gfxmenu"
+        fi
     
-    # shellcheck disable=SC2030,SC2031
-    GRUB_MENUS_ENTRIES_KERNELS="
+        # submenu are enabled
+        if ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+            GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
 # menu wrapper for host kernel entries
-$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" = '' ] && ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo \
-"insmod gfxterm_menu
-insmod gfxmenu
-"; fi)
-submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' $(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 8; else echo 4; fi)")
-
-$(for k in $kernels; do
-    # shellcheck disable=SC2059
-    k_title="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE" "$k")"
-    # shellcheck disable=SC2059
-    k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" "$k")"
-    cat <<ENDCAT
-    # kernel menu entries
-    menuentry '$k_title' $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {
-        #set color_normal=light-gray/black
-        #set color_highlight=dark-gray/black
-
-        $(for m in $modules_devices; do echo "insmod $m"; done|indent 8)
-        $(for uuid in $boot_required_uuid; do
-        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
-        echo 'msg';
-        done|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 12; else echo 8; fi)")
-
-        insmod search
-        insmod linux
-
-        search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-
-        msg 'Loading Linux $k ...'
-        linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
-        
-        if [ -e /boot/initrd.img-$k ]; then
-            msg 'Loading intial ram disk ...'
-            initrd /boot/initrd.img-$k
-        fi
-    }
-ENDCAT
-    if ! bool "$GRUB_DISABLE_RECOVERY" && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
-        cat <<ENDCAT
-    menuentry '$k_title_rec' --class recovery $(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {
-        #set color_normal=light-gray/black
-        #set color_highlight=dark-gray/black
-
-        $(for m in $modules_devices; do echo "insmod $m"; done|indent 8)
-        $(for uuid in $boot_required_uuid; do
-        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS";
-        echo 'msg';
-        done|indent "$(if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then echo 12; else echo 8; fi)")
-
-        insmod search
-        insmod linux
-
-        search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-
-        msg 'Loading Linux $k ...'
-        linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro single
-
-        if [ -e /boot/initrd.img-$k ]; then
-            msg 'Loading intial ram disk ...'
-            initrd /boot/initrd.img-$k
-        fi
-    }
-ENDCAT
-    fi
-done)
-}
+submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
+`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
 "
+        fi
 
-    # create a configuration file with menuentry (for normal mode)
+        GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+    # kernel menu entries"
+    fi
+
+    # for each kernel
+    KERNELS_ENTRIES=
+    for k in $kernels; do
+
+        # shellcheck disable=SC2059
+        k_title="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE" "$k")"
+        # shellcheck disable=SC2059
+        k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" "$k")"
+
+        k_indent=0
+
+        # menu are enabled
+        if ! bool "$GRUB_EARLY_NO_MENU"; then
+            k_indent=4
+            KERNELS_ENTRIES="$KERNELS_ENTRIES
+menuentry '$k_title' "`
+`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {"
+        fi
+
+        KERNEL_ENTRY="
+$(for m in $modules_devices; do echo "insmod $m"; done)
+
+$(for uuid in $boot_required_uuid; do
+    echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+    echo 'msg'
+done)
+
+insmod search
+insmod linux
+
+search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+
+msg 'Loading Linux $k ...'
+linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
+
+if [ -e /boot/initrd.img-$k ]; then
+    msg 'Loading intial ram disk ...'
+    initrd /boot/initrd.img-$k
+fi"
+        
+        KERNELS_ENTRIES="${KERNELS_ENTRIES}$(echo "$KERNEL_ENTRY"|indent "$k_indent")"
+
+        # menu are enabled
+        if ! bool "$GRUB_EARLY_NO_MENU"; then
+            KERNELS_ENTRIES="$KERNELS_ENTRIES
+}"
+        fi
+
+        # menu are enabled and recovery mode is not disabled
+        if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_DISABLE_RECOVERY" \
+        && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
+            KERNELS_ENTRIES="$KERNELS_ENTRIES
+menuentry '$k_title_rec' --class recovery "`
+`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {"
+
+            KERNELS_ENTRIES="$KERNELS_ENTRIES"`
+                `"$(echo "$KERNEL_ENTRY" \
+                    |sed "s/ ro $GRUB_EARLY_CMDLINE_LINUX/ ro single/g" \
+                    |indent "$k_indent")"`
+                `"$NL}"
+        fi
+    done
+    GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+$(echo "$KERNELS_ENTRIES"|indent "$(if ! bool "$GRUB_EARLY_NO_MENU"; then echo '4'; else echo '0'; fi)")"
+
+    # menu and submenu are enabled 
+    if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+        GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+}"
+    fi
+
+    # create a configuration file (for normal mode)
     info "Creating configuration file '%s'" "$GRUB_NORMAL_CFG"
     touch "$GRUB_NORMAL_CFG"
 
@@ -2433,7 +2525,8 @@ ENDCAT
         # load 'common' configuration if found
         if [ "$GRUB_EARLY_COMMON_CONF" != '' ] \
         && [ -f "$GRUB_EARLY_COMMON_CONF" ]; then
-            info "Copying common conf file '%s' to '%s'" "$GRUB_EARLY_COMMON_CONF" "$GRUB_MEMDISK_DIR/$GRUB_COMMON_CONF_FILENAME"
+            info "Copying common conf file '%s' to '%s'" \
+                "$GRUB_EARLY_COMMON_CONF" "$GRUB_MEMDISK_DIR/$GRUB_COMMON_CONF_FILENAME"
             cp "$GRUB_EARLY_COMMON_CONF" "$GRUB_MEMDISK_DIR/$GRUB_COMMON_CONF_FILENAME"
             cat >> "$GRUB_NORMAL_CFG" <<ENDCAT
 
@@ -2747,22 +2840,25 @@ function set_submenu_theme {
 ENDCAT
         fi
 
-        cat >> "$params_host_path" <<ENDCAT
+        # menu and submenu are enabled 
+        if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+            cat >> "$params_host_path" <<ENDCAT
 
 # switch to gfx rendering in submenu
 function submenu_gfxmode {
 ENDCAT
-        if bool "$THEME_ENABLED"; then
-            cat >> "$params_host_path" <<ENDCAT
+            if bool "$THEME_ENABLED"; then
+                cat >> "$params_host_path" <<ENDCAT
     # set theme
     set_submenu_theme
 ENDCAT
-        fi
-        cat >> "$params_host_path" <<ENDCAT
+            fi
+            cat >> "$params_host_path" <<ENDCAT
     # switch to gfx rendering
     terminal_output gfxterm
 }
 ENDCAT
+        fi
 
     # gfxterm is disabled
     else
@@ -2850,8 +2946,10 @@ ENDCAT
         menus_host_path="$GRUB_NORMAL_CFG"
     fi
 
-    # open the menu wrapper
-    if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+    # menu and wrapper are enabled
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+
+        # open the menu wrapper
         cat >> "$menus_host_path" <<ENDCAT
 
 # menu wrapper
@@ -2859,7 +2957,8 @@ $(if ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo \
 "insmod gfxterm_menu
 insmod gfxmenu
 "; fi)
-submenu '$GRUB_EARLY_WRAP_IN_SUBMENU' $(get_submenu_classes "$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES") --id 'submenu-default' {
+submenu '$GRUB_EARLY_WRAP_IN_SUBMENU' $(
+    get_submenu_classes "$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES") --id 'submenu-default' {
     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
 ENDCAT
     fi
@@ -2877,28 +2976,35 @@ ENDCAT
     fi
 
     # host kernel menu
-    echo "$GRUB_MENUS_ENTRIES_KERNELS" >> "$menus_host_path"
+    kernel_indent=0
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ] \
+    && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+        kernel_indent=4
+    fi
+    echo "$GRUB_MENUS_ENTRIES_KERNELS"|indent "$kernel_indent" >> "$menus_host_path"
 
-    # in multi-host mode
-    if bool "$multi_host_mode"; then
+    # menu and multi-host mode are enabled and common menu is specified and is a file
+    if ! bool "$GRUB_EARLY_NO_MENU" && bool "$multi_host_mode" \
+    && [ "$GRUB_EARLY_EXTRA_MENUS" != '' ] && [ -f "$GRUB_EARLY_EXTRA_MENUS" ]; then
 
-        # load 'common' menu if found
-        if [ "$GRUB_EARLY_EXTRA_MENUS" != '' ] \
-        && [ -f "$GRUB_EARLY_EXTRA_MENUS" ]; then
-            info "Copying extra menus file '%s' to '%s'" "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
-            cp "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
-            cat >> "$menus_host_path" <<ENDCAT
+        # copy the common menu file to memdisk dir
+        info "Copying extra menus file '%s' to '%s'" \
+            "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
+        cp "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
+        cat >> "$menus_host_path" <<ENDCAT
+
     # extra menus
     if [ -r \$prefix/$GRUB_EXTRA_MENUS_FILENAME ]; then
         insmod configfile
         source  \$prefix/$GRUB_EXTRA_MENUS_FILENAME
     fi
 ENDCAT
-        fi
     fi
 
-    # close the menu wrapper
-    if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+    # menu and wrapper are enabled
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+
+        # close the menu wrapper
         echo '}' >> "$menus_host_path"
     fi
 
@@ -2912,8 +3018,15 @@ conf_files="$conf_files${NL}$GRUB_NORMAL_CFG"
 
 # modules for shell commands
 debug " - config files (to parse): %s" \
-    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g"|trim|tr '\n' ' '|trim)"
-modules_confs="$(IFS="$NL"; for f in $conf_files; do IFS="$IFS_BAK"; get_manually_loaded_grub_modules_for_file "$f"; echo; done|uniquify -s)"
+    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g" \
+                         |trim|tr '\n' ' '|trim)"
+modules_confs="$(
+    IFS="$NL"
+    for f in $conf_files; do
+        IFS="$IFS_BAK"
+        get_manually_loaded_grub_modules_for_file "$f"
+        echo
+    done|uniquify -s)"
 debug " - modules required by grub-shell scripts: %s" "$modules_confs"
 
 # extra modules manually added
@@ -2922,10 +3035,12 @@ if [ "$GRUB_EARLY_ADD_GRUB_MODULES" != '' ]; then
 fi
 
 # # modules all merged
-modules="$(echo "$modules_core $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"|uniquify -s)"
+modules="$(echo "$modules_core $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"\
+          |uniquify -s)"
 debug " - modules (current host): %s" "$modules"
 
-# if one of the /boot devices has driver 'virtio' and grub modules contains one that disable firmware driver
+# if one of the /boot devices has driver 'virtio'
+# and grub modules contains one that disable firmware driver
 if echo "$boot_devices_kernel_drivers"|grep -q 'virtio' \
 && contains_a_grub_module_that_disable_firmware_driver "$modules"; then
     first_incompatible_module="$(echo " $modules "|grep -o ' nativedisk\|[aueo]hci\|usbms '\
@@ -2955,9 +3070,11 @@ echo "$modules"|tr ' ' '\n' > "$r_file"
 if bool "$multi_host_mode"; then
 
     # modules required by other hosts
-    if bool "$GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS" && [ "$other_hosts_requirements_files" != '' ]; then
+    if bool "$GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS" \
+    && [ "$other_hosts_requirements_files" != '' ]; then
         debug "Getting other hosts modules from requirements files: %s" \
-            "$(echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g"|trim|tr '\n' ' '|trim)"
+            "$(echo "$other_hosts_requirements_files"|sed "s#$GRUB_MEMDISK_DIR\\?/##g" \
+                                                     |trim|tr '\n' ' '|trim)"
         other_hosts_modules="$(
             IFS="$NL"; for f in $other_hosts_requirements_files; do \
                 IFS="$IFS_BAK"; cat -s "$f"|tr '\n' ' '; \
@@ -3011,7 +3128,9 @@ tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
 
 # create the core.img
 info "Creating core image '%s' ..." "$GRUB_CORE_IMG"
-debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' --format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' --config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' $modules_core"
+debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' "`
+      `"--format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' "`
+      `"--config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' $modules_core"
 # shellcheck disable=SC2086
 "$GRUB_MKIMAGE" \
     --directory "$GRUB_MODDIR" \
@@ -3022,7 +3141,8 @@ debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG
     --memdisk "$GRUB_CORE_MEMDISK" \
     --prefix '(memdisk)' \
     $modules_core
-debug "Core image size: %s (max is: %s)" "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
+debug "Core image size: %s (max is: %s)" \
+    "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
 
 # ensure 'boot.img' is installed in grub directory
 if [ ! -f "$GRUB_BOOT_IMG" ]; then
