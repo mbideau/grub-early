@@ -32,13 +32,16 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
-# TODO allow to "boot-to" a 2nd grub in /boot partition "on-disk"
-#      this will allow to access other boot options, and specially a list of rollbacks
-#      that can be btrfs subvolumes for example.
-#      This should be the fallback menu entry, and the fallback behavior (if no menu).
-#      The "on-disk" grub should on-par with the MBR on (theming mostly). Maybe it
-#      can (re)use the Environment Block to store the day/time mode and theme selected ?
-
+# TODO when switching to "grub on disk" is not disabled, this script should
+#      update or, at least check, if the standard grub configuration file
+#      contains the right directives to be usable by grub-early.
+#      For example: I need the following vars to be defined:
+#       - GRUB_TIMEOUT='-1'
+#       - GRUB_TERMINAL_INPUT='at_keyboard' # to be able to use 'fr' keymap
+#      And I also need to generate the 'fr' keymap in the standard grub dir.
+#      Maybe this script could also update the TERMINAL_INPUT var based on what
+#      it is done for the grub-early one.
+#
 # TODO implement RANDOM_BG_IMAGE
 #   RANDOM_BG_IMAGE
 #       If true, will display a random background, according to the directory:
@@ -65,10 +68,6 @@
 #           then grub-mkconfig will normally load all available GRUB video drivers
 #           and use the one most appropriate for your hardware. If you need to
 #           override this for some reason, then you can set this option. 
-#
-#         - GRUB_PRELOAD_MODULES
-#           This option may be set to a list of GRUB module names separated by spaces.
-#           Each module will be loaded as early as possible, at the start of grub.cfg. 
 
 # TODO handle to set color_normal and color_highlight for each kernel menu entry
 
@@ -127,7 +126,9 @@ GRUB_EARLY_WRAPPER_SUBMENU_CLASSES='default'
 GRUB_EARLY_DISABLE_SUBMENU=false
 GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE='Kernels'
 GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
-GRUB_EARLY_KERNEL_SUBLENUS_TITLE='GNU/Linux %s'
+GRUB_EARLY_KERNEL_SUBMENUS_TITLE='GNU/Linux %s'
+GRUB_EARLY_ONDISK_MENU_CLASSES='grub,ondisk,linux,os'
+GRUB_EARLY_ONDISK_MENU_TITLE='Switch to grub << on disk >>'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES=
 
@@ -388,12 +389,12 @@ CONFIGURATION
     KERNEL_SUBMENUS_TITLE
         The title of the kernel submenus.
         First '%s' match, will be replaced by the kernel version (with printf).
-        Default to: \`$GRUB_EARLY_KERNEL_SUBLENUS_TITLE'.
+        Default to: \`$GRUB_EARLY_KERNEL_SUBMENUS_TITLE'.
 
     KERNEL_SUBMENUS_TITLE_RECOVERY
         The title of the kernel submenus for recovery mode.
         First '%s' match, will be replaced by the kernel version (with printf).
-        Default to: \`\$GRUB_EARLY_KERNEL_SUBLENUS_TITLE (recovery)'.
+        Default to: \`\$GRUB_EARLY_KERNEL_SUBMENUS_TITLE (recovery)'.
 
     WRAP_IN_SUBMENU
         If not empty, will wrap all the menu/submenu entries inside one
@@ -408,6 +409,17 @@ CONFIGURATION
     WRAPPER_SUBMENU_CLASSES
         The classes of the wrapper submenu. Separated by comma.
         Default to: \`$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES'
+
+    NO_GRUB_ON_DISK
+        If true, do not generate the entry for swithing to grub on disk.
+
+    ONDISK_MENU_CLASSES
+        The classes of the 'switch to grub on disk' menu entry. Separated by comma.
+        Default to: \`$GRUB_EARLY_ONDISK_MENU_CLASSES'.
+
+    ONDISK_MENU_TITLE
+        The title of the 'switch to grub on disk' menu entry.
+        Default to: \`$GRUB_EARLY_ONDISK_MENU_TITLE'.
 
     RANDOM_THEME
         If true, will use a theme randomly.
@@ -1510,8 +1522,8 @@ if [ "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES" = '' ]; then
             "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES")"
     fi
 fi
-if [ "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" = '' ]; then
-    GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBLENUS_TITLE (recovery)"
+if [ "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" = '' ]; then
+    GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBMENUS_TITLE (recovery)"
 fi
 if [ "$GRUB_EARLY_PRELOAD_MODULES" = '' ]; then
     debug "PRELOAD_MODULES: %s" "$GRUB_PRELOAD_MODULES"
@@ -2330,6 +2342,8 @@ insmod gfxmenu"
     
         # submenu are enabled
         if ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+
+            # add a submenu wrapper for all kernel entries
             GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
 # menu wrapper for host kernel entries
 submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
@@ -2338,6 +2352,7 @@ submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
 "
         fi
 
+        # add a comment before the kernel menu entries
         GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
     # kernel menu entries"
     fi
@@ -2347,20 +2362,23 @@ submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
     for k in $kernels; do
 
         # shellcheck disable=SC2059
-        k_title="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE" "$k")"
+        k_title="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE" "$k")"
         # shellcheck disable=SC2059
-        k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBLENUS_TITLE_RECOVERY" "$k")"
+        k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" "$k")"
 
         k_indent=0
 
         # menu are enabled
         if ! bool "$GRUB_EARLY_NO_MENU"; then
             k_indent=4
+
+            # add a menu entry for this kernel
             KERNELS_ENTRIES="$KERNELS_ENTRIES
 menuentry '$k_title' "`
 `"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {"
         fi
 
+        # define every instruction to load a kernel
         KERNEL_ENTRY="
 $(for m in $modules_devices; do echo "insmod $m"; done)
 
@@ -2373,6 +2391,7 @@ insmod search
 insmod linux
 
 search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+set prefix=(\$root)
 
 msg 'Loading Linux $k ...'
 linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
@@ -2382,10 +2401,13 @@ if [ -e /boot/initrd.img-$k ]; then
     initrd /boot/initrd.img-$k
 fi"
         
+        # add the kernel instructions to kernels entries
         KERNELS_ENTRIES="${KERNELS_ENTRIES}$(echo "$KERNEL_ENTRY"|indent "$k_indent")"
 
         # menu are enabled
         if ! bool "$GRUB_EARLY_NO_MENU"; then
+
+            # close the kernel menu entry
             KERNELS_ENTRIES="$KERNELS_ENTRIES
 }"
         fi
@@ -2393,6 +2415,8 @@ fi"
         # menu are enabled and recovery mode is not disabled
         if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_DISABLE_RECOVERY" \
         && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
+
+            # add the same entry than for the kernel but with linux command line 'ro single'
             KERNELS_ENTRIES="$KERNELS_ENTRIES
 menuentry '$k_title_rec' --class recovery "`
 `"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {"
@@ -2404,13 +2428,68 @@ menuentry '$k_title_rec' --class recovery "`
                 `"$NL}"
         fi
     done
+
+    # merge kernels entries into the main var kernels menu entries (even if there is no menu)
     GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
 $(echo "$KERNELS_ENTRIES"|indent "$(if ! bool "$GRUB_EARLY_NO_MENU"; then echo '4'; else echo '0'; fi)")"
 
     # menu and submenu are enabled 
     if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+
+        # close the kernel submenu entry
         GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
 }"
+    fi
+
+    # if 'switch to grub-on-disk' entry is not disabled
+    if ! bool "$GRUB_EARLY_NO_GRUB_ON_DISK"; then
+
+        ONDISK_MENU_ENTRY="
+# switch to grub on disk"
+        k_indent=0
+
+        # menu are enabled
+        if ! bool "$GRUB_EARLY_NO_MENU"; then
+            k_indent=4
+
+            # add a submenu entry for grub on-disk switch
+            # (why a 'submenu' and not a 'menu', because the menu entries from the grub on disk
+            #  will be appended to the current menu, and by using a submenu, we clean the menu
+            #  from existing entries)
+            ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
+submenu '$GRUB_EARLY_ONDISK_MENU_TITLE' "`
+`"$(get_submenu_classes "$GRUB_EARLY_ONDISK_MENU_CLASSES") --id 'gnulinux-other-on-disk' {
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+"
+        fi
+
+        # define every instruction to switch to grub on disk
+        ONDISK_ENTRY="$ONDISK_ENTRY
+$(for m in $modules_devices; do echo "insmod $m"; done)
+
+$(for uuid in $boot_required_uuid; do
+    echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+    echo 'msg'
+done)
+
+insmod search
+insmod linux
+
+search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+set prefix=(\$root)
+
+msg 'Switching to grub on disk ...'
+normal /boot/grub/grub.cfg"
+        # add it to menu entry
+        ONDISK_MENU_ENTRY="${ONDISK_MENU_ENTRY}$(echo "$ONDISK_ENTRY"|indent "$k_indent")"
+
+        # menu are enabled
+        if ! bool "$GRUB_EARLY_NO_MENU"; then
+
+            # close menu entry
+            ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
+}"
+        fi
     fi
 
     # create a configuration file (for normal mode)
@@ -2994,6 +3073,9 @@ ENDCAT
         kernel_indent=4
     fi
     echo "$GRUB_MENUS_ENTRIES_KERNELS"|indent "$kernel_indent" >> "$menus_host_path"
+
+    # switch to grub on-disk
+    echo "$ONDISK_MENU_ENTRY"|indent "$kernel_indent" >> "$menus_host_path"
 
     # menu and multi-host mode are enabled and common menu is specified and is a file
     if ! bool "$GRUB_EARLY_NO_MENU" && bool "$multi_host_mode" \
