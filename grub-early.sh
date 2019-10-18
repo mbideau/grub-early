@@ -32,16 +32,59 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # 
 
+# TODO document that, in order to prevent a terminal box poping out when booting
+#      from grub 'on-disk', the user should have patched the file
+#      '/etc/grub.d/10_linux' changing:
+#          - the variable quiet_boot="0" to quiet_boot="1"
+#          - the following lines : if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
+#            to this one         : if [ x"$quiet_boot" = x0 ]; then
+#          - the following line  : echo "submenu '$(gettext_printf "Advanced options for %s" "${OS}" | grub_quote)' \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' {"
+#            to this one         : echo "submenu '$(gettext_printf "Advanced options for %s" "${OS}" | grub_quote)' \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' ${CLASS} {"
+#         it translate to the following command:
+#         ~> sed -e 's/^quiet_boot="0"$/quiet_boot="1"/g' \
+#                -e 's/if \[ x"$quiet_boot" = x0 \] || \[ x"$type" != xsimple \]; then/if [ x"$quiet_boot" = x0 ]; then/g' \
+#                -e 's/\(echo "submenu .*Advanced options for %s.* \){"$/\1${CLASS} {"/g' \
+#                -i '/etc/grub.d/10_linux'
+#
+#      '/etc/grub.d/00_header' changing:
+#          - all occurence of font name 'unicode' by the font name choosen (ex: 'euro')
+#         it translate to the following command:
+#         ~> sed -e 's/unicode/euro/g' -i '/etc/grub.d/00_header'
+
+# TODO document that, in order to prevent grub on disk failing when loading a
+#      module (not already loaded), the user should have patched the files
+#      '/etc/grub.d/10_linux' and '/usr/share/grub/grub-mkconfig_lib' changing:
+#          - all 'insmod XX' line by prefixing the module name by its parent dir full path
+#            like: 'insmod "\$prefix/$GRUB_FORMAT/XX.mod"'
+#
+
+# TODO to have menu entry classes for memtest the file
+#      '/etc/grub.d/20_memtest86+' have to be patched.
+#      Use either, the following command:
+#        ~> sed "s/\(menuentry .*\) {$/\1 --class memtest {/" -i '/etc/grub.d/20_memtest86+'
+
+# TODO add the 'fallback' var like the 'default' menu entry
+
+# TODO use 'gfxterm_font' instead of the normal 'font'.
+#      If this variable is set, it names a font to use for text on the
+#      ‘gfxterm’ graphical terminal. Otherwise, ‘gfxterm’ may use any available
+#      font.
+
+# TODO when deduplicating files in the memdisk will be implemented, use the
+#      'icondir' variables to store shared icons. Icons can be renamed in the
+#      theme files to prevent collision between themes with the same icon names
+
 # TODO when switching to "grub on disk" is not disabled, this script should
 #      update or, at least check, if the standard grub configuration file
 #      contains the right directives to be usable by grub-early.
 #      For example: I need the following vars to be defined:
 #       - GRUB_TIMEOUT='-1'
 #       - GRUB_TERMINAL_INPUT='at_keyboard' # to be able to use 'fr' keymap
+#       - GRUB_PRELOAD_MODULES='echo'  # when /etc/grub.d/10_linux is not patched
 #      And I also need to generate the 'fr' keymap in the standard grub dir.
 #      Maybe this script could also update the TERMINAL_INPUT var based on what
 #      it is done for the grub-early one.
-#
+
 # TODO implement RANDOM_BG_IMAGE
 #   RANDOM_BG_IMAGE
 #       If true, will display a random background, according to the directory:
@@ -51,7 +94,7 @@
 #       Then it will enable the \`RANDOM_THEME' feature.
 
 # TODO support grub configuration directives:
-#         - GRUB_DEFAULT/GRUB_SAVEDEFAULT
+#         - GRUB_SAVEDEFAULT
 #           If you set this to ‘saved’, then the default menu entry will be that 
 #           saved by ‘GRUB_SAVEDEFAULT’ or grub-set-default. This relies on the
 #           environment block, which may not be available in all situations (see
@@ -71,6 +114,27 @@
 
 # TODO handle to set color_normal and color_highlight for each kernel menu entry
 
+# TODO try to reuse code from grub-mkconfig and /etc/grub.d (for example the
+#      '10_linux' file that generate the menu entries and also test for every
+#      possible initrd file) and /usr/lib/grub/grub-mkconfig_lib
+
+# TODO use /usr/bin/grub-script-check, like in '/usr/lib/grub/grub-mkconfig_lib'
+
+# TODO implements different layout for organising menu entries
+#      - default:
+#            unlock_disk
+#              |- grub-on-disk
+#              |- kernels
+#            extra ...
+#
+#      - flat:
+#            grub-on-disk
+#            kernels
+#            extra ...
+#
+#
+
+# TODO add translations with gettext
 
 # halt on first error
 set -e
@@ -85,6 +149,7 @@ GRUB_MODDIR=$GRUB_PREFIX/lib/grub/i386-pc
 GRUB_CONFIG_DEFAULT=/etc/default/grub
 BOOT_DIR=/boot
 GRUB_DIR=$BOOT_DIR/grub
+GRUB_CFG=$GRUB_DIR/grub.cfg
 GRUB_EARLY_DIR=$GRUB_DIR/early
 GRUB_CORE_FORMAT=i386-pc
 GRUB_CORE_IMG=$GRUB_EARLY_DIR/core.img
@@ -96,6 +161,7 @@ GRUB_BOOT_IMG_SRC=$GRUB_MODDIR/boot.img
 GRUB_MEMTEST_BIN=$BOOT_DIR/memtest86+.bin
 GRUB_MEMDISK_DIR=$GRUB_EARLY_DIR/memdisk
 GRUB_NORMAL_CFG=$GRUB_MEMDISK_DIR/normal.cfg
+GRUB_EARLY_MODDIR=$GRUB_MEMDISK_DIR/$GRUB_CORE_FORMAT
 GRUB_HOST_DETECTION_FILENAME=detect.cfg
 GRUB_HOST_CONFIGURATION_FILENAME=params.cfg
 GRUB_HOST_MENUS_FILENAME=menus.cfg
@@ -111,7 +177,9 @@ GRUB_THEMES_DIR=$GRUB_MEMDISK_DIR/themes
 GRUB_TERMINAL_BG_IMAGE=$GRUB_MEMDISK_DIR/terminal_background.tga
 
 # user defaults
-GRUB_EARLY_CMDLINE_LINUX='quiet splash'
+GRUB_EARLY_DEFAULT=
+GRUB_EARLY_FALLBACK=
+#~ GRUB_EARLY_CMDLINE_LINUX='quiet splash'
 GRUB_EARLY_TIMEOUT=15
 GRUB_EARLY_EMPTY_MEMDISK_DIR=yes
 GRUB_EARLY_SHORT_UUID=true
@@ -122,13 +190,17 @@ GRUB_EARLY_FONT=ascii
 GRUB_EARLY_GFXMODE=auto
 GRUB_EARLY_GFXPAYLOAD=keep
 GRUB_EARLY_RANDOM_THEME=false
-GRUB_EARLY_WRAPPER_SUBMENU_CLASSES='default'
-GRUB_EARLY_DISABLE_SUBMENU=false
-GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE='Kernels'
-GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
-GRUB_EARLY_KERNEL_SUBMENUS_TITLE='GNU/Linux %s'
-GRUB_EARLY_ONDISK_MENU_CLASSES='grub,ondisk,linux,os'
-GRUB_EARLY_ONDISK_MENU_TITLE='Switch to grub << on disk >>'
+GRUB_EARLY_GLOBAL_WRAPPER_CLASSES='default'
+#~ GRUB_EARLY_DISABLE_SUBMENU=false
+#~ GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE='Kernels'
+#~ GRUB_EARLY_KERNEL_SUBMENUS_CLASSES='linux,os,kernel'
+#~ GRUB_EARLY_KERNEL_SUBMENUS_TITLE='GNU/Linux %s'
+#~ GRUB_EARLY_ONDISK_MENU_CLASSES='grub,ondisk,linux,os'
+#~ GRUB_EARLY_ONDISK_MENU_TITLE='Switch to grub << on disk >>'
+GRUB_EARLY_LOCKED_DISK_MENU_TITLE='Unlock the disk'
+GRUB_EARLY_LOCKED_DISK_MENU_CLASSES='locked,encrypted,key,disk'
+GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE='Boot from disk'
+GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES=
 
@@ -229,6 +301,9 @@ FILES
     $GRUB_DIR
         Default grub2 \`boot' directory.
 
+    $GRUB_CFG
+        Default grub2 configuration file.
+
     $GRUB_EARLY_DIR
         Default grub-early \`boot' directory.
 
@@ -279,24 +354,21 @@ CONFIGURATION
         where generated. It will be sourced, not executed. So it will have access
         to all variables of this script, and if it fails, this script will too.
 
-    CMDLINE_LINUX
-        The same as the "standard" \`GRUB_CMDLINE_LINUX_DEFAULT' option. Default
-        to \`$GRUB_EARLY_CMDLINE_LINUX'. If empty, uses the value of the
-        \`GRUB_CMDLINE_LINUX_DEFAULT' configuration variable.
+    DEFAULT
+        The grub (sub)menu entries ids to boot. Use '>' between id.
+        The same as the "standard" \`GRUB_DEFAULT' option.
+        Default to: \`$GRUB_EARLY_DEFAULT'.
 
-    SINGLE_KERNEL
-        The value of a kernel file in /boot (i.e.: 'vmlinuz-4.19.0-4-amd64').
-        Only this kernel will be considered (only this one entry for kernels).
-        No detection of other kernels.
-
-    DISABLE_RECOVERY
-        If true, do not generate menu entries for recovery mode.
+    FALLBACK
+        The grub (sub)menu entries ids to boot in case the default failed.
+        Use '>' between id.
+        The same as the "standard" \`GRUB_FALLBACK' option.
+        Default to: \`$GRUB_EARLY_FALLBACK'.
 
     TIMEOUT
         The number of second to wait before automatically booting the default
         menu entry. Same as the "standard" \`GRUB_TIMEOUT' option. Default to
-        \`$GRUB_EARLY_TIMEOUT'. If empty, uses the value of the \`GRUB_TIMEOUT'
-        configuration variable.
+        \`$GRUB_EARLY_TIMEOUT'.
 
     EMPTY_MEMDISK_DIR
         If true, empty the memdisk directory before adding content to it.
@@ -339,12 +411,10 @@ CONFIGURATION
 
     GFXMODE
         The same as the "standard" \`GRUB_GFXMODE' option. Default to \`$GRUB_EARLY_GFXMODE'.
-        If empty, uses the value of the \`GRUB_GFXMODE' configuration variable.
 
     GFXPAYLOAD
         The same as the "standard" \`GRUB_GFXPAYLOAD_LINUX' option. Default to
-        \`$GRUB_EARLY_GFXPAYLOAD'. If empty, uses the value of the
-        \`GRUB_GFXPAYLOAD_LINUX' configuration variable.
+        \`$GRUB_EARLY_GFXPAYLOAD'.
 
     NO_GFXTERM
         Disable using \`gfxterm' which allow for a nice graphical rendering.
@@ -365,40 +435,20 @@ CONFIGURATION
         The name of the default theme if there are multiple themes in the
         themes directory \`THEMES_DIR'. Else it default to the one found.
     
+    LOCKED_DISK_MENU_TITLE
+        The title of the 'disk locked' submenu entry.
+        Default to: \`$GRUB_EARLY_LOCKED_DISK_MENU_TITLE'.
+
+    LOCKED_DISK_MENU_CLASSES
+        The classes of the 'disk locked' submenu entry. Separated by comma.
+        Default to: \`$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES'.
+
     NO_MENU
         If true, will not use any menu entry.
 
-    DISABLE_SUBMENU
-        The same as the "standard" \`GRUB_DISABLE_SUBMENU' option.
-        It will disable wraping all the kernel menu entries into one submenu.
-        Default to \`$GRUB_EARLY_DISABLE_SUBMENU'. If empty, uses the value
-        of the \`GRUB_DISABLE_SUBMENU' configuration variable.
-
-    KERNEL_WRAPPER_SUBMENU_TITLE
-        The title of the kernel wrapper submenu.
-        Default to: \`$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE'
-
-    KERNEL_WRAPPER_SUBMENU_CLASSES
-        The classes of the kernel wrapper submenu. Separated by comma.
-        Default to: \`wrapper,\$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES'.
-
-    KERNEL_SUBMENUS_CLASSES
-        The classes of the kernel submenus. Separated by comma.
-        Default to: \`$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES'.
-
-    KERNEL_SUBMENUS_TITLE
-        The title of the kernel submenus.
-        First '%s' match, will be replaced by the kernel version (with printf).
-        Default to: \`$GRUB_EARLY_KERNEL_SUBMENUS_TITLE'.
-
-    KERNEL_SUBMENUS_TITLE_RECOVERY
-        The title of the kernel submenus for recovery mode.
-        First '%s' match, will be replaced by the kernel version (with printf).
-        Default to: \`\$GRUB_EARLY_KERNEL_SUBMENUS_TITLE (recovery)'.
-
-    WRAP_IN_SUBMENU
+    GLOBAL_WRAPPER
         If not empty, will wrap all the menu/submenu entries inside one
-        submenu entries which title is the value of this option.
+        submenu entry which title is the value of this option.
         It will have the class 'default'.
         It is intended to help having a cleaner theme and display with only
         one entry instead of dosens. So by default the booting splash will be
@@ -406,20 +456,9 @@ CONFIGURATION
         submenu it will have a theme that is made for multiple menu entries.
         So no feature loss and better looking.
 
-    WRAPPER_SUBMENU_CLASSES
-        The classes of the wrapper submenu. Separated by comma.
-        Default to: \`$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES'
-
-    NO_GRUB_ON_DISK
-        If true, do not generate the entry for swithing to grub on disk.
-
-    ONDISK_MENU_CLASSES
-        The classes of the 'switch to grub on disk' menu entry. Separated by comma.
-        Default to: \`$GRUB_EARLY_ONDISK_MENU_CLASSES'.
-
-    ONDISK_MENU_TITLE
-        The title of the 'switch to grub on disk' menu entry.
-        Default to: \`$GRUB_EARLY_ONDISK_MENU_TITLE'.
+    GLOBAL_WRAPPER_CLASSES
+        The classes of the wrapper submenu entry. Separated by comma.
+        Default to: \`$GRUB_EARLY_GLOBAL_WRAPPER_CLASSES'
 
     RANDOM_THEME
         If true, will use a theme randomly.
@@ -479,9 +518,9 @@ CONFIGURATION
     PRELOAD_MODULES
         The same as the "standard" \`GRUB_PRELOAD_MODULES' option.
         This option may be set to a list of GRUB module names separated by spaces.
-        Each module will be loaded as early as possible, at the start of grub.cfg. 
-        Default to \`$GRUB_EARLY_PRELOAD_MODULES'. If empty, uses the value
-        of the \`GRUB_PRELOAD_MODULES' configuration variable.
+        Each module will be loaded as early as possible, at the start of $( 
+        basename "$GRUB_CFG")
+        Default to \`$GRUB_EARLY_PRELOAD_MODULES'.
 
     ADD_GRUB_MODULES
         A space separated list of grub modules that need to be added (copied)
@@ -1000,7 +1039,7 @@ get_cmd_grub_modules()
 
     # no special command
     else
-        modules="$(grep "^ *$cmd *:" "$GRUB_MODDIR/command.lst"|awk '{print $2}')"
+        modules="$(grep "^ *\\(\\* *\\)\\?$cmd *:" "$GRUB_MODDIR/command.lst"|awk '{print $2}')"
     fi
     echo "$modules"
 }
@@ -1149,7 +1188,7 @@ select_random_theme()
         t_name="$(echo "$1"|tr ' ' '\n'|tail -n $((multiplier + 1))|head -n 1)"
     cat <<ENDCAT
 $s_cond [ "\$SECOND" -gt "$s_value" ]; then
-    set theme_name=$t_name
+    set theme_name="$t_name"
 ENDCAT
     done
     echo 'fi'
@@ -1494,40 +1533,23 @@ if [ "$GRUB_EARLY_VERBOSITY" = '' ]; then
     debug "VERBOSITY (in cfg script): %s (%s)" "QUIET" "$V_QUIET"
     GRUB_EARLY_VERBOSITY="$V_QUIET"
 fi
-if [ "$GRUB_EARLY_CMDLINE_LINUX" = '' ]; then
-    debug "CMDLINE_LINUX: %s" "$GRUB_CMDLINE_LINUX_DEFAULT"
-    GRUB_EARLY_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX_DEFAULT"
-fi
-if [ "$GRUB_EARLY_TIMEOUT" = '' ]; then
-    debug "TIMEOUT: %s" "$GRUB_TIMEOUT"
-    GRUB_EARLY_TIMEOUT="$GRUB_TIMEOUT"
-fi
-if [ "$GRUB_EARLY_GFXMODE" = '' ]; then
-    debug "GFXMODE: %s" "$GRUB_GFXMODE"
-    GRUB_EARLY_GFXMODE="$GRUB_GFXMODE"
-fi
-if [ "$GRUB_EARLY_GFXPAYLOAD" = '' ]; then
-    debug "GFXPAYLOAD: %s" "$GRUB_GFXPAYLOAD_LINUX"
-    GRUB_EARLY_GFXPAYLOAD="$GRUB_GFXPAYLOAD_LINUX"
-fi
-if [ "$GRUB_EARLY_DISABLE_SUBMENU" = '' ]; then
-    debug "DISABLE_SUBMENU: %s" "$GRUB_DISABLE_SUBMENU"
-    GRUB_EARLY_DISABLE_SUBMENU="$GRUB_DISABLE_SUBMENU"
-fi
-if [ "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES" = '' ]; then
-    GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES="wrapper"
-    if [ "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES" != '' ]; then
-        GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES="$(printf '%s,%s' \
-            "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES"            \
-            "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES")"
+#~ if [ "$GRUB_EARLY_KERNEL_GLOBAL_WRAPPER_CLASSES" = '' ]; then
+#~     GRUB_EARLY_KERNEL_GLOBAL_WRAPPER_CLASSES="wrapper"
+#~     if [ "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES" != '' ]; then
+#~         GRUB_EARLY_KERNEL_GLOBAL_WRAPPER_CLASSES="$(printf '%s,%s' \
+#~             "$GRUB_EARLY_KERNEL_GLOBAL_WRAPPER_CLASSES"            \
+#~             "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES")"
+#~     fi
+#~ fi
+#~ if [ "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" = '' ]; then
+#~     GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBMENUS_TITLE (recovery)"
+#~ fi
+if [ "$GRUB_EARLY_DEFAULT" = '' ]; then
+    GRUB_EARLY_DEFAULT="locked-disk"
+    if [ "$GRUB_EARLY_GLOBAL_WRAPPER" != '' ] && ! bool "$GRUB_EARLY_NO_MENU"; then
+        GRUB_EARLY_DEFAULT="global-wrapper>$GRUB_EARLY_DEFAULT"
     fi
-fi
-if [ "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" = '' ]; then
-    GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY="$GRUB_EARLY_KERNEL_SUBMENUS_TITLE (recovery)"
-fi
-if [ "$GRUB_EARLY_PRELOAD_MODULES" = '' ]; then
-    debug "PRELOAD_MODULES: %s" "$GRUB_PRELOAD_MODULES"
-    GRUB_EARLY_PRELOAD_MODULES="$GRUB_PRELOAD_MODULES"
+    debug "DEFAULT: %s" "$GRUB_EARLY_DEFAULT"
 fi
 
 # day/night mode
@@ -1902,7 +1924,13 @@ fi
 # ensure locale is up to date
 locale_short="$(echo "$GRUB_EARLY_LOCALE"|trim|cut -c -2)"
 if [ "$locale_short" != 'en' ]; then
-    locale_dest=${GRUB_MEMDISK_DIR}${host_prefix}/${locale_short}.mo
+    locale_dest_dir="${GRUB_MEMDISK_DIR}${host_prefix}/locale"
+    locale_dest_filename="${locale_short}.mo"
+    locale_dest="$locale_dest_dir/$locale_dest_filename"
+    if [ ! -d "$locale_dest_dir" ]; then
+        debug "Creating directory '$locale_dest_dir'"
+        mkdir -p 0700 -p "$locale_dest_dir"
+    fi
     info "Copying locale '%s'' to '%s'" "$GRUB_EARLY_LOCALE" "$locale_dest"
     cp "$GRUB_PREFIX/share/locale/${locale_short}/LC_MESSAGES/grub.mo" "$locale_dest"
 fi
@@ -1918,7 +1946,13 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     elif echo "$GRUB_EARLY_FONT"|grep -q '\.pf2$'; then
         font_src="$GRUB_PREFIX/share/grub/$GRUB_EARLY_FONT"
     fi
-    font_dest="${GRUB_MEMDISK_DIR}${host_prefix}/$(basename "$font_src" '.pf2').pf2"
+    font_dest_dir="${GRUB_MEMDISK_DIR}${host_prefix}/fonts"
+    font_dest_filename="$(basename "$font_src" '.pf2').pf2"
+    font_dest="$font_dest_dir/$font_dest_filename"
+    if [ ! -d "$font_dest_dir" ]; then
+        debug "Creating directory '$font_dest_dir'"
+        mkdir -p 0700 -p "$font_dest_dir"
+    fi
     info "Copying font '%s' to '%s'" "$(basename "$font_src" '.pf2')" "$font_dest"
     cp "$font_src" "$font_dest"
 
@@ -2006,25 +2040,25 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
 #     fi
 fi
 
-# kernel entry specified by user
-if [ "$GRUB_EARLY_SINGLE_KERNEL" != '' ]; then
-    kernels="$GRUB_EARLY_SINGLE_KERNEL"
-    info "User specified kernel: %s" "$kernels"
-
-# detect all initramfs and kernel
-else
-    debug "Detecting bootable kernels ..."
-    kernels="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n" \
-              |sed 's/^vmlinuz-//g'|sort -urV)"
-    info "Found kernel(s): %s" "$(echo "$kernels"|trim)"
-fi
-
-# NO_MENU option and kernel not specified by user and multiple kernels found
-if bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_SINGLE_KERNEL" = '' ] \
-&& [ "$(echo "$kernels"|wc -l)" -gt 1 ]; then
-    kernels="$(echo "$kernels"|head -n 1)"
-    warning "Will only use the first kernel found: '%s' (because of option: %s)" "$kernels" 'NO_MENU'
-fi
+#~ # kernel entry specified by user
+#~ if [ "$GRUB_EARLY_SINGLE_KERNEL" != '' ]; then
+#~     kernels="$GRUB_EARLY_SINGLE_KERNEL"
+#~     info "User specified kernel: %s" "$kernels"
+#~ 
+#~ # detect all initramfs and kernel
+#~ else
+#~     debug "Detecting bootable kernels ..."
+#~     kernels="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf "%P\\n" \
+#~               |sed 's/^vmlinuz-//g'|sort -urV)"
+#~     info "Found kernel(s): %s" "$(echo "$kernels"|trim)"
+#~ fi
+#~ 
+#~ # NO_MENU option and kernel not specified by user and multiple kernels found
+#~ if bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_SINGLE_KERNEL" = '' ] \
+#~ && [ "$(echo "$kernels"|wc -l)" -gt 1 ]; then
+#~     kernels="$(echo "$kernels"|head -n 1)"
+#~     warning "Will only use the first kernel found: '%s' (because of option: %s)" "$kernels" 'NO_MENU'
+#~ fi
 
 # detect required disk UUIDs to unlock /boot
 debug "Detecting required disk UUIDs to unlock /boot ..."
@@ -2327,170 +2361,163 @@ fi"
         fi
     fi
 
-    # build kernel menu entries
-    GRUB_MENUS_ENTRIES_KERNELS=
-
-    # menu are enabled
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-
-        # load submenus modules
-        if [ "$GRUB_EARLY_WRAP_IN_SUBMENU" = '' ] && ! bool "$GRUB_EARLY_NO_GFXTERM"; then
-            GRUB_MENUS_ENTRIES_KERNELS="
-insmod gfxterm_menu
-insmod gfxmenu"
-        fi
-    
-        # submenu are enabled
-        if ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
-
-            # add a submenu wrapper for all kernel entries
-            GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
-# menu wrapper for host kernel entries
-submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
-`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_CLASSES") --id 'submenu-kernels' {
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
-"
-        fi
-
-        # add a comment before the kernel menu entries
-        GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
-    # kernel menu entries"
-    fi
-
-    # for each kernel
-    KERNELS_ENTRIES=
-    for k in $kernels; do
-
-        # shellcheck disable=SC2059
-        k_title="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE" "$k")"
-        # shellcheck disable=SC2059
-        k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" "$k")"
-
-        k_indent=0
-
-        # menu are enabled
-        if ! bool "$GRUB_EARLY_NO_MENU"; then
-            k_indent=4
-
-            # add a menu entry for this kernel
-            KERNELS_ENTRIES="$KERNELS_ENTRIES
-menuentry '$k_title' "`
-`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {"
-        fi
-
-        # define every instruction to load a kernel
-        KERNEL_ENTRY="
-$(for m in $modules_devices; do echo "insmod $m"; done)
-
-$(for uuid in $boot_required_uuid; do
-    echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
-    echo 'msg'
-done)
-
-insmod search
-insmod linux
-
-search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-set prefix=(\$root)
-
-msg 'Loading Linux $k ...'
-linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
-
-if [ -e /boot/initrd.img-$k ]; then
-    msg 'Loading intial ram disk ...'
-    initrd /boot/initrd.img-$k
-fi"
-        
-        # add the kernel instructions to kernels entries
-        KERNELS_ENTRIES="${KERNELS_ENTRIES}$(echo "$KERNEL_ENTRY"|indent "$k_indent")"
-
-        # menu are enabled
-        if ! bool "$GRUB_EARLY_NO_MENU"; then
-
-            # close the kernel menu entry
-            KERNELS_ENTRIES="$KERNELS_ENTRIES
-}"
-        fi
-
-        # menu are enabled and recovery mode is not disabled
-        if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_DISABLE_RECOVERY" \
-        && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
-
-            # add the same entry than for the kernel but with linux command line 'ro single'
-            KERNELS_ENTRIES="$KERNELS_ENTRIES
-menuentry '$k_title_rec' --class recovery "`
-`"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {"
-
-            KERNELS_ENTRIES="$KERNELS_ENTRIES"`
-                `"$(echo "$KERNEL_ENTRY" \
-                    |sed "s/ ro $GRUB_EARLY_CMDLINE_LINUX/ ro single/g" \
-                    |indent "$k_indent")"`
-                `"$NL}"
-        fi
-    done
-
-    # merge kernels entries into the main var kernels menu entries (even if there is no menu)
-    GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
-$(echo "$KERNELS_ENTRIES"|indent "$(if ! bool "$GRUB_EARLY_NO_MENU"; then echo '4'; else echo '0'; fi)")"
-
-    # menu and submenu are enabled 
-    if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
-
-        # close the kernel submenu entry
-        GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
-}"
-    fi
-
-    # if 'switch to grub-on-disk' entry is not disabled
-    if ! bool "$GRUB_EARLY_NO_GRUB_ON_DISK"; then
-
-        ONDISK_MENU_ENTRY="
-# switch to grub on disk"
-        k_indent=0
-
-        # menu are enabled
-        if ! bool "$GRUB_EARLY_NO_MENU"; then
-            k_indent=4
-
-            # add a submenu entry for grub on-disk switch
-            # (why a 'submenu' and not a 'menu', because the menu entries from the grub on disk
-            #  will be appended to the current menu, and by using a submenu, we clean the menu
-            #  from existing entries)
-            ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
-submenu '$GRUB_EARLY_ONDISK_MENU_TITLE' "`
-`"$(get_submenu_classes "$GRUB_EARLY_ONDISK_MENU_CLASSES") --id 'gnulinux-other-on-disk' {
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
-"
-        fi
-
-        # define every instruction to switch to grub on disk
-        ONDISK_ENTRY="$ONDISK_ENTRY
-$(for m in $modules_devices; do echo "insmod $m"; done)
-
-$(for uuid in $boot_required_uuid; do
-    echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
-    echo 'msg'
-done)
-
-insmod search
-insmod linux
-
-search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
-set prefix=(\$root)
-
-msg 'Switching to grub on disk ...'
-normal /boot/grub/grub.cfg"
-        # add it to menu entry
-        ONDISK_MENU_ENTRY="${ONDISK_MENU_ENTRY}$(echo "$ONDISK_ENTRY"|indent "$k_indent")"
-
-        # menu are enabled
-        if ! bool "$GRUB_EARLY_NO_MENU"; then
-
-            # close menu entry
-            ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
-}"
-        fi
-    fi
+#~     # build kernel menu entries
+#~     GRUB_MENUS_ENTRIES_KERNELS=
+#~ 
+#~     # menu are enabled
+#~     if ! bool "$GRUB_EARLY_NO_MENU"; then
+#~ 
+#~         # submenu are enabled
+#~         if ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+#~ 
+#~             # add a submenu wrapper for all kernel entries
+#~             GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+#~ # menu wrapper for host kernel entries
+#~ submenu '$GRUB_EARLY_KERNEL_WRAPPER_SUBMENU_TITLE' "`
+#~ `"$(get_submenu_classes "$GRUB_EARLY_KERNEL_GLOBAL_WRAPPER_CLASSES") --id 'submenu-kernels' {
+#~     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+#~ "
+#~         fi
+#~ 
+#~         # add a comment before the kernel menu entries
+#~         GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+#~     # kernel menu entries"
+#~     fi
+#~ 
+#~     # recovery directive
+#~     GRUB_EARLY_CMDLINE_LINUX_RECOVERY=single
+#~     if [ -x /lib/recovery-mode/recovery-menu ]; then
+#~         GRUB_EARLY_CMDLINE_LINUX_RECOVERY=recovery
+#~     fi
+#~ 
+#~     # for each kernel
+#~     KERNELS_ENTRIES=
+#~     for k in $kernels; do
+#~ 
+#~         # shellcheck disable=SC2059
+#~         k_title="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE" "$k")"
+#~         # shellcheck disable=SC2059
+#~         k_title_rec="$(printf "$GRUB_EARLY_KERNEL_SUBMENUS_TITLE_RECOVERY" "$k")"
+#~ 
+#~         k_indent=0
+#~ 
+#~         # menu are enabled
+#~         if ! bool "$GRUB_EARLY_NO_MENU"; then
+#~             k_indent=4
+#~ 
+#~             # add a menu entry for this kernel
+#~             KERNELS_ENTRIES="$KERNELS_ENTRIES
+#~ submenu '$k_title' "`
+#~ `"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k' {
+#~     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+#~ "
+#~         fi
+#~ 
+#~         # define every instruction to load a kernel
+#~         KERNEL_ENTRY="
+#~ # load linux module before changing \$root and \$prefix
+#~ insmod linux
+#~ 
+#~ # unlock the disk and switch to it
+#~ unlock_disk
+#~ switch_to_disk
+#~ 
+#~ menuentry '$k_title (preboot)' --class more --class iso --id 'preboot-$k' {
+#~ 
+#~     msg 'Loading Linux $k ...'
+#~     linux  /boot/vmlinuz-$k root=UUID=$boot_fs_uuid ro $GRUB_EARLY_CMDLINE_LINUX
+#~ 
+#~     if [ -e /boot/initrd.img-$k ]; then
+#~         msg 'Loading intial ram disk ...'
+#~         initrd /boot/initrd.img-$k
+#~     fi
+#~ 
+#~ }"
+#~         
+#~         # add the kernel instructions to kernels entries
+#~         KERNELS_ENTRIES="${KERNELS_ENTRIES}$(echo "$KERNEL_ENTRY"|indent "$k_indent")"
+#~ 
+#~         # menu are enabled
+#~         if ! bool "$GRUB_EARLY_NO_MENU"; then
+#~ 
+#~             # close the kernel menu entry
+#~             KERNELS_ENTRIES="$KERNELS_ENTRIES
+#~ }"
+#~         fi
+#~ 
+#~         # menu are enabled and recovery mode is not disabled
+#~         if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_RECOVERY"; then
+#~ 
+#~             # add the same entry than for the kernel but with linux command line 'ro single'
+#~             KERNELS_ENTRIES="$KERNELS_ENTRIES
+#~ menuentry '$k_title_rec' --class recovery "`
+#~ `"$(get_submenu_classes "$GRUB_EARLY_KERNEL_SUBMENUS_CLASSES") --id 'gnulinux-$k-recovery' {"
+#~ 
+#~             KERNELS_ENTRIES="$KERNELS_ENTRIES"`
+#~                 `"$(echo "$KERNEL_ENTRY" \
+#~                     |sed "s/ ro $GRUB_EARLY_CMDLINE_LINUX/ ro $GRUB_EARLY_CMDLINE_LINUX_RECOVERY/g" \
+#~                     |sed -e "s/(preboot)/(recovery, preboot)/g" -e "s/--id 'preboot-/--id 'recovery-preboot-/g" \
+#~                     |indent "$k_indent")"`
+#~                 `"$NL}"
+#~         fi
+#~     done
+#~ 
+#~     # merge kernels entries into the main var kernels menu entries (even if there is no menu)
+#~     GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+#~ $(echo "$KERNELS_ENTRIES"|indent "$(if ! bool "$GRUB_EARLY_NO_MENU"; then echo '4'; else echo '0'; fi)")"
+#~ 
+#~     # menu and submenu are enabled 
+#~     if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+#~ 
+#~         # close the kernel submenu entry
+#~         GRUB_MENUS_ENTRIES_KERNELS="$GRUB_MENUS_ENTRIES_KERNELS
+#~ }"
+#~     fi
+#~ 
+#~     # if 'switch to grub-on-disk' entry is not disabled
+#~     if ! bool "$GRUB_EARLY_NO_GRUB_ON_DISK"; then
+#~ 
+#~         ONDISK_MENU_ENTRY="
+#~ # switch to grub on disk"
+#~         k_indent=0
+#~ 
+#~         # menu are enabled
+#~         if ! bool "$GRUB_EARLY_NO_MENU"; then
+#~             k_indent=4
+#~ 
+#~             # add a submenu entry for grub on-disk switch
+#~             # (why a 'submenu' and not a 'menu', because the menu entries from the grub on disk
+#~             #  will be appended to the current menu, and by using a submenu, we clean the menu
+#~             #  from existing entries)
+#~             ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
+#~ submenu '$GRUB_EARLY_ONDISK_MENU_TITLE' "`
+#~ `"$(get_submenu_classes "$GRUB_EARLY_ONDISK_MENU_CLASSES") --id 'gnulinux-other-on-disk' {
+#~     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+#~ "
+#~         fi
+#~ 
+#~         # define every instruction to switch to grub on disk
+#~         ONDISK_ENTRY="$ONDISK_ENTRY
+#~ # load linux module before changing \$root and \$prefix
+#~ insmod linux
+#~ 
+#~ # unlock the disk and switch to it
+#~ unlock_disk
+#~ switch_to_disk
+#~ 
+#~ msg 'Switching to grub on disk ...'
+#~ source '$GRUB_CFG'"
+#~         # add it to menu entry
+#~         ONDISK_MENU_ENTRY="${ONDISK_MENU_ENTRY}$(echo "$ONDISK_ENTRY"|indent "$k_indent")"
+#~ 
+#~         # menu are enabled
+#~         if ! bool "$GRUB_EARLY_NO_MENU"; then
+#~ 
+#~             # close menu entry
+#~             ONDISK_MENU_ENTRY="$ONDISK_MENU_ENTRY
+#~ }"
+#~         fi
+#~     fi
 
     # create a configuration file (for normal mode)
     info "Creating configuration file '%s'" "$GRUB_NORMAL_CFG"
@@ -2520,12 +2547,17 @@ ENDCAT
 set verbosity=$GRUB_EARLY_VERBOSITY
 export verbosity
 
-# display message if verbosity enabled
+# if verbose mode is enabled
+if [ "\$verbosity" -gt "$V_QUIET" ]; then
+
+    # load echo module
+    insmod echo
+fi
+
+# display message
 function msg {
-    if [ \$verbosity -gt $V_QUIET ]; then
-        shift
-        insmod echo
-        echo "\${1}"
+    if [ "\$verbosity" -gt "$V_QUIET" ]; then
+        echo "\$1"
     fi
 }
 ENDCAT
@@ -2699,7 +2731,7 @@ ENDCAT
 
 # load keyboard layout (not enabled yet)
 insmod keylayouts
-keymap \$prefix${h_prefix}/$(basename "$kbdlayout_dest")
+keymap "\$prefix${h_prefix}/$(basename "$kbdlayout_dest")"
 ENDCAT
     fi
 
@@ -2708,7 +2740,7 @@ ENDCAT
         cat >> "$params_host_path" <<ENDCAT
 
 # load locale (enabled instantly)
-set locale_dir=\$prefix${h_prefix}
+set locale_dir="\$prefix${h_prefix}/locale"
 set lang=$GRUB_EARLY_LOCALE
 ENDCAT
     fi
@@ -2722,7 +2754,7 @@ ENDCAT
 
 # load font
 insmod font
-loadfont \$prefix${h_prefix}/$(basename "$font_dest")
+loadfont "\$prefix${h_prefix}/fonts/$(basename "$font_dest")"
 ENDCAT
         fi
 
@@ -2739,7 +2771,7 @@ ENDCAT
                     cat >> "$params_host_path" <<ENDCAT
 
 # define theme name
-set theme_name=$GRUB_EARLY_THEME_DEFAULT
+set theme_name="$GRUB_EARLY_THEME_DEFAULT"
 ENDCAT
 
                 # random theme
@@ -2770,9 +2802,9 @@ ENDCAT
 
 # define theme name
 if [ "\$day_night_mode" = "day" ]; then
-    set theme_name=$GRUB_EARLY_THEME_DEFAULT_DAY
+    set theme_name="$GRUB_EARLY_THEME_DEFAULT_DAY"
 else
-    set theme_name=$GRUB_EARLY_THEME_DEFAULT_NIGHT
+    set theme_name="$GRUB_EARLY_THEME_DEFAULT_NIGHT"
 fi
 ENDCAT
 
@@ -2811,7 +2843,7 @@ ENDCAT
 export theme_name
 
 # define theme path (not enabled yet)
-set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
+set theme="\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME"
 ENDCAT
 
         fi
@@ -2821,7 +2853,7 @@ ENDCAT
             cat >> "$params_host_path" <<ENDCAT
 
 # define resolution (not enabled yet)
-set gfxmode=$GRUB_EARLY_GFXMODE
+set gfxmode="$GRUB_EARLY_GFXMODE"
 ENDCAT
         fi
 
@@ -2830,7 +2862,7 @@ ENDCAT
             cat >> "$params_host_path" <<ENDCAT
 
 # keep payload or not
-set gfxpayload=$GRUB_EARLY_GFXPAYLOAD
+set gfxpayload="$GRUB_EARLY_GFXPAYLOAD"
 ENDCAT
         fi
 
@@ -2922,17 +2954,17 @@ ENDCAT
 
 # set theme for submenu
 function set_submenu_theme {
-    if [ -r \$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_INNER_FILENAME ]; then
-        set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_INNER_FILENAME
-    elif [ -r \$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME ]; then
-        set theme=\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME
+    if [ -r "\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_INNER_FILENAME" ]; then
+        set theme="\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_INNER_FILENAME"
+    elif [ -r "\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME" ]; then
+        set theme="\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_FILENAME"
     fi
 }
 ENDCAT
         fi
 
         # menu and submenu are enabled 
-        if ! bool "$GRUB_EARLY_NO_MENU" && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
+        if ! bool "$GRUB_EARLY_NO_MENU"; then
             cat >> "$params_host_path" <<ENDCAT
 
 # switch to gfx rendering in submenu
@@ -2973,6 +3005,7 @@ ENDCAT
     fi
 
     # alternative config and keystatus setup
+    # shellcheck disable=SC2129
     cat >> "$params_host_path" <<ENDCAT
 
 # alternative config enabled
@@ -2995,6 +3028,35 @@ fi
 export alternative_config_enabled
 $GRUB_AT_TERMINAL_CONF
 ENDCAT
+
+    # function to unlock the disk and one to switch to it
+    cat >> "$params_host_path" <<ENDCAT
+
+# helper function to detect if disk is unlocked
+function disk_is_unlocked {
+    test $(for dev in $($GRUB_PROBE -t baremetal_hints /boot); do
+        printf ' -a -e "(%s)"' "$dev"
+    done | sed 's/^ -a //g'; echo)
+}
+
+# helper function to unlock the disk
+function unlock_disk {
+    $(for m in $modules_devices; do echo "insmod $m"; done | indent 4)
+    $(for uuid in $boot_required_uuid; do
+        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+        echo 'msg'
+    done | indent 4)
+}
+
+# helper function to switch to disk
+function switch_to_disk {
+    insmod search
+    search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+}
+ENDCAT
+
+    # add a new line at the end of the file (just because I like that, yeah! :-P)
+    echo >> "$params_host_path"
 
     # here start the menus configuration
 
@@ -3037,19 +3099,45 @@ ENDCAT
         menus_host_path="$GRUB_NORMAL_CFG"
     fi
 
-    # menu and wrapper are enabled
-    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+    # default boot
+    if [ "$GRUB_EARLY_DEFAULT" != '' ] && ! bool "$GRUB_EARLY_NO_MENU"; then
+        cat >> "$menus_host_path" <<ENDCAT
+# set default boot menu entry
+set default="$GRUB_EARLY_DEFAULT"
+export default
+ENDCAT
+    fi
 
-        # open the menu wrapper
+    # fallback boot
+    if [ "$GRUB_EARLY_FALLBACK" != '' ] && ! bool "$GRUB_EARLY_NO_MENU"; then
+        cat >> "$menus_host_path" <<ENDCAT
+# set fallback boot menu entry
+set fallback="$GRUB_EARLY_FALLBACK"
+export fallback
+ENDCAT
+    fi
+
+    # graphical mode and menus are enabled
+    if ! bool "$GRUB_EARLY_NO_GFXTERM" && ! bool "$GRUB_EARLY_NO_MENU"; then
+
+        # load the menu modules
         cat >> "$menus_host_path" <<ENDCAT
 
-# menu wrapper
-$(if ! bool "$GRUB_EARLY_NO_GFXTERM"; then echo \
-"insmod gfxterm_menu
+# load menu modules
+insmod gfxterm_menu
 insmod gfxmenu
-"; fi)
-submenu '$GRUB_EARLY_WRAP_IN_SUBMENU' $(
-    get_submenu_classes "$GRUB_EARLY_WRAPPER_SUBMENU_CLASSES") --id 'submenu-default' {
+ENDCAT
+    fi
+
+    # menu and global wrapper are enabled
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_GLOBAL_WRAPPER" != '' ]; then
+
+        # open the global wrapper
+        cat >> "$menus_host_path" <<ENDCAT
+
+# global wrapper
+submenu "$GRUB_EARLY_GLOBAL_WRAPPER" $(
+    get_submenu_classes "$GRUB_EARLY_GLOBAL_WRAPPER_CLASSES") --id "global-wrapper" {
     $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
 ENDCAT
     fi
@@ -3066,39 +3154,123 @@ ENDCAT
 ENDCAT
     fi
 
-    # host kernel menu
-    kernel_indent=0
-    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ] \
-    && ! bool "$GRUB_EARLY_DISABLE_SUBMENU"; then
-        kernel_indent=4
+    # indentation
+    indentation=0
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_GLOBAL_WRAPPER" != '' ]; then
+        indentation=4
     fi
-    echo "$GRUB_MENUS_ENTRIES_KERNELS"|indent "$kernel_indent" >> "$menus_host_path"
+    debug "indentation: %s" "$indentation"
 
-    # switch to grub on-disk
-    echo "$ONDISK_MENU_ENTRY"|indent "$kernel_indent" >> "$menus_host_path"
+#~     # host kernel menu
+#~     echo "$GRUB_MENUS_ENTRIES_KERNELS"|indent "$indentation" >> "$menus_host_path"
 
-    # menu and multi-host mode are enabled and common menu is specified and is a file
-    if ! bool "$GRUB_EARLY_NO_MENU" && bool "$multi_host_mode" \
+    # menu are enabled and extra menus is specified and is a file
+    EXTRA_MENU_ENTRY=
+    if ! bool "$GRUB_EARLY_NO_MENU" \
     && [ "$GRUB_EARLY_EXTRA_MENUS" != '' ] && [ -f "$GRUB_EARLY_EXTRA_MENUS" ]; then
 
-        # copy the common menu file to memdisk dir
+        # copy the extra menus file to memdisk dir
         info "Copying extra menus file '%s' to '%s'" \
             "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
         cp "$GRUB_EARLY_EXTRA_MENUS" "$GRUB_MEMDISK_DIR/$GRUB_EXTRA_MENUS_FILENAME"
-        cat >> "$menus_host_path" <<ENDCAT
 
-    # extra menus
-    if [ -r \$prefix/$GRUB_EXTRA_MENUS_FILENAME ]; then
-        insmod configfile
-        source  \$prefix/$GRUB_EXTRA_MENUS_FILENAME
+        EXTRA_MENU_ENTRY="
+# extra menus
+if [ -r "'"'"\$prefix/$GRUB_EXTRA_MENUS_FILENAME"'"'" ]; then
+    insmod configfile
+    source "'"'"\$prefix/$GRUB_EXTRA_MENUS_FILENAME"'"'"
+fi"
     fi
+
+    # boot to grub on disk entry
+    BOOT_GRUB_ON_DISK_MENU_ENTRY=
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        BOOT_GRUB_ON_DISK_MENU_ENTRY="
+# display menu entry to switch to grub on disk
+submenu "'"'"$GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE"'"'" $(
+    get_submenu_classes "$GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES") --id "'"unlocked-disk"'" {
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)"
+    fi
+    BOOT_GRUB_ON_DISK_ENTRY="
+
+# load linux module before changing \$root and \$prefix
+insmod linux
+
+# switching to disk
+switch_to_disk
+
+# not changing prefix here because if we do, modules will be loaded from
+# the grub on disk, and if the grub on-disk has a different version, some
+# modules might not work
+
+# to ensure that fonts loaded by grub on disk shell script will be found
+# the prefix must be set to the parent directory of the 'fonts' dir
+# i.e.: the memdisk host directory
+set prefix="'"'"(memdisk)${h_prefix}"'"'"
+
+# booting from disk
+msg "'"Switching to grub on disk ..."'"
+source "'"'"$GRUB_CFG"'"'
+    BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY"`
+                                 `"$(echo "$BOOT_GRUB_ON_DISK_ENTRY"|indent "$indentation")"
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY
+}"
+    fi
+
+    # the unlock disk entry
+    UNLOCK_DISK_MENU_ENTRY=
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        UNLOCK_DISK_MENU_ENTRY="
+# display menu entry to unlock the disk
+submenu "'"'"$GRUB_EARLY_LOCKED_DISK_MENU_TITLE"'"'" $(
+    get_submenu_classes "$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES") --id "'"locked-disk"'" {
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)"
+    fi
+    UNLOCK_DISK_ENTRY="
+
+# unlocking the disk
+unlock_disk
+
+$(if [ "$(echo "$GRUB_EARLY_DEFAULT"|sed 's#^.*>##g')" = 'locked-disk' ]; then
+    echo '# set default boot menu entry'
+    echo 'set default="unlocked-disk"'
+fi)
+
+$(if [ "$GRUB_EARLY_TIMEOUT" != "" ]; then
+    echo '# set a timeout (to show a progress in gfx mode)'
+    echo "set timeout=$GRUB_EARLY_TIMEOUT"
+fi)
+$BOOT_GRUB_ON_DISK_ENTRY
+$EXTRA_MENU_ENTRY"
+    UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY"`
+                           `"$(echo "$UNLOCK_DISK_ENTRY"|indent "$indentation")"
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY
+}"
+    fi
+   
+    # build the menus file
+    indent "$indentation" >> "$menus_host_path" <<ENDCAT
+
+# disk is unlocked
+if disk_is_unlocked; then
+    $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 4)
+
+# disk locked
+else
+    $(echo "$UNLOCK_DISK_MENU_ENTRY"|indent 4)
+fi
+$EXTRA_MENU_ENTRY
 ENDCAT
-    fi
 
-    # menu and wrapper are enabled
-    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_WRAP_IN_SUBMENU" != '' ]; then
+#~     # switch to grub on-disk
+#~     echo "$ONDISK_MENU_ENTRY"|indent "$indentation" >> "$menus_host_path"
 
-        # close the menu wrapper
+    # menu and global wrapper are enabled
+    if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_EARLY_GLOBAL_WRAPPER" != '' ]; then
+
+        # close the global wrapper
         echo '}' >> "$menus_host_path"
     fi
 
@@ -3112,8 +3284,7 @@ conf_files="$conf_files${NL}$GRUB_NORMAL_CFG"
 
 # modules for shell commands
 debug " - config files (to parse): %s" \
-    "$(echo "$conf_files"|sed "s#\\($GRUB_MEMDISK_DIR\\|$GRUB_EARLY_DIR\\)/\\?##g" \
-                         |trim|tr '\n' ' '|trim)"
+    "$(echo "$conf_files"|sed "s#$GRUB_DIR/\\?##g"|trim|tr '\n' ' '|trim)"
 modules_confs="$(
     IFS="$NL"
     for f in $conf_files; do
@@ -3123,13 +3294,30 @@ modules_confs="$(
     done|uniquify -s)"
 debug " - modules required by grub-shell scripts: %s" "$modules_confs"
 
+modules_grub_cfg=
+# no custom normal.cfg provided
+if [ -z "$GRUB_EARLY_NORMAL_CFG" ]; then
+
+    # because the prefix is not updated even after switching to grub on disk
+    # and that grub on disk will keep loading modules, we need to have all
+    # the modules it could load in the modules dirs of grub early in MBR
+    # so we need to parse that config file
+    modules_grub_cfg="$({ get_manually_loaded_grub_modules_for_file "$GRUB_CFG" &&
+                        for cmd in $(get_command_list "$GRUB_CFG"); do
+                            get_cmd_grub_modules "$cmd"
+                        done }|uniquify -s)"
+    debug " - modules $(basename "$GRUB_CFG"): %s" "$modules_grub_cfg"
+fi
+
+
 # extra modules manually added
 if [ "$GRUB_EARLY_ADD_GRUB_MODULES" != '' ]; then
     debug " - modules extra: %s" "$GRUB_EARLY_ADD_GRUB_MODULES"
 fi
 
 # modules all merged
-modules="$(echo "$modules_core $GRUB_EARLY_PRELOAD_MODULES $modules_usb_keyboards $modules_confs $GRUB_EARLY_ADD_GRUB_MODULES"\
+modules="$(echo "$modules_core $GRUB_EARLY_PRELOAD_MODULES $modules_usb_keyboards $modules_confs"`
+                `"$modules_grub_cfg $GRUB_EARLY_ADD_GRUB_MODULES" \
           |uniquify -s)"
 debug " - modules (current host): %s" "$modules"
 
@@ -3188,19 +3376,34 @@ modules_with_deps="$(for m in $modules; do get_grub_module_deps "$m"; echo; done
 debug "Modules (all hosts, with deps): %s" "$modules_with_deps"
 
 # copying required modules to modules dir
-modules_dir="$GRUB_MEMDISK_DIR/i386-pc"
-info "Copying required modules to modules dir '%s'" "$modules_dir"
-if [ ! -d "$modules_dir" ]; then
+info "Copying required modules to modules dir '%s'" "$GRUB_EARLY_MODDIR"
+if [ ! -d "$GRUB_EARLY_MODDIR" ]; then
     # shellcheck disable=SC2174
-    mkdir -m 0700 -p "$modules_dir"
+    mkdir -m 0700 -p "$GRUB_EARLY_MODDIR"
 fi
 for m in $modules_with_deps; do
     m_path="$GRUB_MODDIR/$m.mod"
     if [ ! -r "$m_path" ]; then
         fatal_error "Module '%s' isn't readable or doesn't exist" "$m_path"
     fi
-    cp "$m_path" "$modules_dir"/
+    cp "$m_path" "$GRUB_EARLY_MODDIR"/
 done
+
+# in multi-host mode
+if bool "$multi_host_mode"; then
+
+    # TODO remove? Symlinks can be displayed but are not correctly interpreted in path
+
+    # creating a symlink to the modules directory
+    for h in $HOST_ID $other_hosts; do
+        link_filename="$(basename "$GRUB_EARLY_MODDIR")"
+        link_dest="$GRUB_MEMDISK_DIR/$h/$link_filename"
+        if [ -e "$link_dest" ]; then
+            rm -f "$link_dest"
+        fi
+        ln -s ../"$link_filename" "$link_dest"
+    done
+fi
 
 
 # trigger the hook
