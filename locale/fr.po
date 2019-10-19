@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grub-early 0.0.1\n"
 "Report-Msgid-Bugs-To: mica.devel@gmail.com\n"
-"POT-Creation-Date: 2019-10-19 13:07+0200\n"
+"POT-Creation-Date: 2019-10-19 18:09+0200\n"
 "PO-Revision-Date: 2019-10-19 11:24+0200\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -17,325 +17,305 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-#: grub-early.sh:1265
+#: grub-early.sh:1224
 msgid "Binary '%s' is required to get the host UUID"
 msgstr "Le binaire '%s' est requis pour obtenir l'UUID de l'hôte"
 
-#: grub-early.sh:1514
+#: grub-early.sh:1473
 msgid "Binary '%s' not found (at path: '%s')"
 msgstr "Binaire '%s' non trouvé (à: '%s')"
 
-#: grub-early.sh:1564
+#: grub-early.sh:166
+msgid "Boot from disk"
+msgstr "Démarrer à partir du disque"
+
+#: grub-early.sh:1521
 msgid "Both %s and %s must be specified"
 msgstr "%s et %s doivent être spécifiés"
 
-#: grub-early.sh:2211 grub-early.sh:3187
+#: grub-early.sh:2089 grub-early.sh:3075
 msgid "But there is no grub module for disk driver '%s'"
 msgstr "Mais il n'y a aucun module grub pour le pilote de disque '%s'"
 
-#: grub-early.sh:1447
+#: grub-early.sh:1406
 msgid "Configuration file '%s' doesn't exist nor is readable"
 msgstr "Le fichier de configuration '%s' n'existe pas ou n'est pas lisible"
 
-#: grub-early.sh:1892 grub-early.sh:3120 grub-early.sh:3301
+#: grub-early.sh:1821 grub-early.sh:3008 grub-early.sh:3189
 msgid "Copying '%s' to '%s'"
 msgstr "Copie de '%s' vers '%s'"
 
-#: grub-early.sh:2481
+#: grub-early.sh:2365
 msgid "Copying common conf file '%s' to '%s'"
 msgstr "Copie du fichier de configuration '%s' vers '%s'"
 
-#: grub-early.sh:1997
-msgid "Copying default theme%s '%s' to '%s'"
-msgstr "Copie du thème par défaut%s '%s' vers '%s'"
-
-#: grub-early.sh:3011
+#: grub-early.sh:2876
 msgid "Copying extra menus file '%s' to '%s'"
 msgstr "Copie du fichier de menus supplémentaires '%s' vers '%s'"
 
-#: grub-early.sh:1956
+#: grub-early.sh:1885
 msgid "Copying font '%s' to '%s'"
 msgstr "Copie de la police '%s' vers '%s'"
 
-#: grub-early.sh:1934
+#: grub-early.sh:1863
 msgid "Copying locale '%s'' to '%s'"
 msgstr "Copie de la traduction '%s' vers '%s'"
 
-#: grub-early.sh:3233
+#: grub-early.sh:3121
 msgid "Copying required modules to modules dir '%s'"
 msgstr "Copie des modules requis vers le dossier des modules '%s'"
 
-#: grub-early.sh:1981
+#: grub-early.sh:1908
 msgid "Copying themes dir%s '%s' to '%s'"
-msgstr "Copie du dossier des thèmes '%s' vers '%s'"
+msgstr "Copie du dossier des thèmes%s '%s' vers '%s'"
 
-#: grub-early.sh:1853
+#: grub-early.sh:1782
 msgid "Creating 'host' directory '%s'"
 msgstr "Création du dossier de l'hôte '%s'"
 
-#: grub-early.sh:2353
+#: grub-early.sh:2237
 msgid "Creating configuration file '%s'"
 msgstr "Création du fichier de configuration '%s'"
 
-#: grub-early.sh:3281
+#: grub-early.sh:3169
 msgid "Creating core image '%s' ..."
 msgstr "Création de l'image noyau '%s'"
 
-#: grub-early.sh:2494
+#: grub-early.sh:2378
 msgid "Creating current host '%s' required files ..."
 msgstr "Création du fichier des dépendances pour l'hôte '%s'"
 
-#: grub-early.sh:2499
+#: grub-early.sh:2383
 msgid "Creating detection file '%s'"
 msgstr "Création du fichier de détection d'hôte '%s'"
 
-#: grub-early.sh:1754
+#: grub-early.sh:1683
 msgid "Creating early directory '%s'"
 msgstr "Création du dossier pré-amorçage '%s'"
 
-#: grub-early.sh:1913
+#: grub-early.sh:1842
 msgid "Creating layout '%s' to '%s'"
 msgstr "Création de la disposition clavier '%s' dans le fichier '%s'"
 
-#: grub-early.sh:3275
+#: grub-early.sh:3163
 msgid "Creating memdisk '%s' from '%s'"
 msgstr "Création de l'archive 'memdisk' '%s' à partir de '%s'"
 
-#: grub-early.sh:1763
+#: grub-early.sh:1692
 msgid "Creating memdisk directory '%s'"
 msgstr "Création du dossier 'memdisk' '%s'"
 
-#: grub-early.sh:2933
+#: grub-early.sh:2797
 msgid "Creating menu file '%s'"
 msgstr "Création du fichier des menus '%s'"
 
-#: grub-early.sh:2546
+#: grub-early.sh:2430
 msgid "Creating parameters file '%s'"
 msgstr "Création du fichier des paramètres '%s'"
 
-#: grub-early.sh:3202
+#: grub-early.sh:3090
 msgid "Creating requirements file '%s'"
 msgstr "Création du fichier des dépendances '%s'"
 
-#: grub-early.sh:1965
+#: grub-early.sh:1894
 msgid "Creating theme dir '%s'"
 msgstr "Création du dossier des thèmes '%s'"
 
-#: grub-early.sh:1574
+#: grub-early.sh:1531
 msgid "Day/Night mode enabled"
 msgstr "Mode Jour/Nuit activé"
 
-#: grub-early.sh:1759
+#: grub-early.sh:1688
 msgid "Deleting memdisk directory '%s'"
 msgstr "Suppression du dossier 'memdisk' '%s'"
 
-#: grub-early.sh:3320
+#: grub-early.sh:3208
 msgid "Done! ;-)"
 msgstr "Fait! ;-)"
 
-#: grub-early.sh:716
-msgid "ERROR"
-msgstr "ERREUR"
-
-#: grub-early.sh:1412
+#: grub-early.sh:1371
 msgid "Empty option definition"
 msgstr "Définition des options vide"
 
-#: grub-early.sh:701
-msgid "FATAL ERROR"
-msgstr "ERREUR FATALE"
-
-#: grub-early.sh:1391
+#: grub-early.sh:1350
 msgid "Failed to find driver for disk '%s'"
 msgstr "Échec de la recherche d'un pilote pour le disque '%s'"
 
-#: grub-early.sh:1365
+#: grub-early.sh:1324
 msgid "Failed to find driver for usb keyboard '%s'"
 msgstr "Échec de la recherche d'un pilote pour le clavier USB '%s'"
 
-#: grub-early.sh:1919
+#: grub-early.sh:1848
 msgid "Failed to generate the keyboard layout"
 msgstr "Échec de la génération de la disposition clavier"
 
-#: grub-early.sh:1478
+#: grub-early.sh:1437
 msgid "Found multiple device for %s '%s'"
 msgstr "Trouvé plusieurs périphériques pour %s '%s'"
 
-#: grub-early.sh:2014
-msgid "Generating random background theme derivatives%s ..."
-msgstr "Génération des thèmes dérivés avec fond aléatoire%s ..."
-
-#: grub-early.sh:1896
+#: grub-early.sh:1825
 msgid "Grub core file '%s' have syntax errors"
 msgstr "Le fichier grub noyau '%s' a des erreurs de syntaxe"
 
-#: grub-early.sh:3115
+#: grub-early.sh:3003
 msgid "Grub menus file '%s' have syntax errors"
 msgstr "Le fichier grub des menus '%s' a des erreurs de syntaxe"
 
-#: grub-early.sh:3126
+#: grub-early.sh:3014
 msgid "Grub normal file '%s' have syntax errors"
 msgstr "Le fichier grub de configuration '%s' a des erreurs de syntaxe"
 
-#: grub-early.sh:2899
+#: grub-early.sh:2763
 msgid "Grub params file '%s' have syntax errors"
 msgstr "Le fichier grub des paramètres '%s' a des erreurs de syntaxe"
 
-#: grub-early.sh:1799
+#: grub-early.sh:1728
 msgid "Host '%s' archive file '%s' doesn't exist nor is readable"
 msgstr ""
 "Le fichier d'archive '%s' de l'hôte '%s' n'existe pas ou n'est pas lisible"
 
-#: grub-early.sh:3180
+#: grub-early.sh:3068
 msgid ""
 "Incompatible grub module requirements between '%s' and disk driver '%s'."
 msgstr "Conflit de modules entre '%s' et le pilote de disque '%s'."
 
-#: grub-early.sh:2203
+#: grub-early.sh:2081
 msgid "Incompatible grub modules requirements between %s '%s' and %s '%s'"
 msgstr "Conflit de modules entre %s '%s' et %s '%s'"
 
-#: grub-early.sh:3307
+#: grub-early.sh:3195
 msgid "Installing grub to MBR BIOS of disk '%s' ..."
 msgstr "Installation de grub dans le BIOS MBR du disque '%s'"
 
-#: grub-early.sh:1570
+#: grub-early.sh:1527
 msgid "Invalid %s format (must be: %H:%M, i.e.: 08:00 or 21:30)"
 msgstr "Format %s invalide (doit être: %H:%M, càd: 08:00 or 21:30)"
 
-#: grub-early.sh:1689
-msgid "Invalid color list for option '%s' (%s)"
-msgstr "Liste de couleurs invalides pour l'option '%s' (%s)"
-
-#: grub-early.sh:1487
+#: grub-early.sh:1446
 msgid "Invalid device '%s'"
 msgstr "Périphérique invalide '%s'"
 
-#: grub-early.sh:1176
+#: grub-early.sh:1135
 msgid "Invalid number of themes"
 msgstr "Nombre de thèmes invalide"
 
-#: grub-early.sh:1181
+#: grub-early.sh:1140
 msgid "Invalid number of themes (can't be '%d', maximum allowed is %d)"
 msgstr ""
 "Nombre de thèmes invalide (ne peut pas être '%d', le maximum autorisé est "
 "'%d')"
 
-#: grub-early.sh:1633
+#: grub-early.sh:1590
 msgid "Invalid theme name '%s' (no space allowed) from '%s'"
 msgstr "Nom de thème '%s' invalide (pas d'espace autorisé) pour '%s'"
 
-#: grub-early.sh:1709
+#: grub-early.sh:1638
 msgid "Invalid value for option '%s' (input: %s)"
 msgstr "Valeur invalide pour l'option '%s' (entrée: %s)"
 
-#: grub-early.sh:3241
+#: grub-early.sh:3129
 msgid "Module '%s' isn't readable or doesn't exist"
 msgstr "Le module '%s' n'existe pas ou n'est pas lisible"
 
-#: grub-early.sh:1724
+#: grub-early.sh:1653
 msgid "Multi-host mode enabled"
 msgstr "Mode Multi-Hôte activé"
 
-#: grub-early.sh:2126
+#: grub-early.sh:2004
 msgid "No keyboard found"
 msgstr "Aucun clavier trouvé"
 
-#: grub-early.sh:2186
+#: grub-early.sh:2064
 msgid "No keyboards grub module found"
 msgstr "Aucun module grub de clavier trouvé"
 
-#: grub-early.sh:1639
+#: grub-early.sh:1596
 msgid "No theme found in directory '%s'"
 msgstr "Aucun thème trouvé dans le dossier '%s'"
 
-#: grub-early.sh:3316
+#: grub-early.sh:3204
 msgid "Not installing grub to MBR BIOS of disk '%s' (user asked not to)"
 msgstr ""
 "N'installe pas grub dans le BIOS MBR du disque '%s' (à la demande de "
 "l'utilisateur)"
 
-#: grub-early.sh:1818
+#: grub-early.sh:1633
+msgid "Random theme mode enabled"
+msgstr "Mode thème aléatoire activé"
+
+#: grub-early.sh:1747
 msgid "Required host '%s' file '%s' doesn't exist nor is readable"
 msgstr ""
 "Le fichier d'archive '%s' de l'hôte '%s' n'existe pas ou n'est pas lisible"
 
-#: grub-early.sh:1822
+#: grub-early.sh:1751
 msgid "Required host '%s' file '%s' have syntax errors"
 msgstr "Le fichier requis '%s' de l'hôte '%s' a des erreurs de syntaxe"
 
-#: grub-early.sh:3188
+#: grub-early.sh:3076
 msgid "So the disk will not be available if you use this grub module '%s'"
 msgstr ""
-"Donc le disque ne sera pas disponible si vous utilisez ce module grub "
-"'%s'"
+"Donc le disque ne sera pas disponible si vous utilisez ce module grub '%s'"
 
-#: grub-early.sh:2212
+#: grub-early.sh:2090
 msgid "So the disk will not be available if you use this usb grub module '%s'"
 msgstr ""
 "Donc le disque ne sera pas disponible si vous utilisez ce module grub USB "
 "'%s'"
 
-#: grub-early.sh:2209 grub-early.sh:3185
+#: grub-early.sh:2087 grub-early.sh:3073
 msgid "That requires a suitable grub module for disk driver"
 msgstr "Cela requiert un module grub de pilote de disque adapté"
 
-#: grub-early.sh:3184
+#: grub-early.sh:3072
 msgid "The grub module '%s' prevents using firmware driver (grub module '%s')"
 msgstr ""
 "Le module grub '%s' empêche l'usage des pilotes 'firmware' (module grub '%s')"
 
-#: grub-early.sh:2208
+#: grub-early.sh:2086
 msgid ""
 "The usb grub module '%s' prevents using firmware driver (grub module '%s')"
 msgstr ""
 "Le module grub USB '%s' empêche l'usage des pilotes 'firmware' (module grub "
 "'%s')"
 
-#: grub-early.sh:1668
-msgid ""
-"Theming can't be enabled at DAY time but not at NIGHT time, or the opposite"
-msgstr ""
-"Les thèmes ne peuvent être activés seulement pour le mode Jour et pas le "
-"mode Nuit, ou l'inverse"
-
-#: grub-early.sh:1178
+#: grub-early.sh:1137
 msgid "Tips: remove themes to get to %d or add some to get to %d"
 msgstr ""
 "Astuce: supprimer autant de thèmes que nécessaires pour n'en conserver que "
 "%d ou ajoutez en pour en obtenir %d"
 
-#: grub-early.sh:2213 grub-early.sh:3189
+#: grub-early.sh:2091 grub-early.sh:3077
 msgid "To solve this issue:"
 msgstr "Pour résoudre ce problème:"
 
-#: grub-early.sh:1094
+#: grub-early.sh:1075
 msgid "Top level device %s not found for device path '%s' (not a device?)"
 msgstr ""
 "Périphérique de plus haut niveau %s non trouvé pour le chemin du "
 "périphérique '%s' (pas un périphérique?)"
 
-#: grub-early.sh:730
-msgid "WARNING"
-msgstr "AVERTISSEMENT"
+#: grub-early.sh:164
+msgid "Unlock the disk"
+msgstr "Dévérouiller le disque"
 
-#: grub-early.sh:2135
+#: grub-early.sh:2013
 msgid "You can't have keymap '%s' and have no PS2 nor USB keyboards"
 msgstr ""
 "Il n'est pas possible d'utiliser la disposition clavier '%s' et de "
 "désactiver les claviers PS2 et USB"
 
-#: grub-early.sh:3191
+#: grub-early.sh:3079
 msgid "and/or do not use usb devices (prefer PS2 keyboard for example)"
 msgstr ""
 "et/ou n'utilisez pas de périphériques USB (préférez un clavier PS2 par "
 "exemple)"
 
-#: grub-early.sh:2136
+#: grub-early.sh:2014
 msgid "because they are the only one which support keylayouts"
 msgstr "car ce sont les seuls à supporter la disposition clavier"
 
-#: grub-early.sh:1177
+#: grub-early.sh:1136
 msgid ""
 "can't be '%d', needs to be a divider of %d, because randomness is based on "
 "seconds"
@@ -343,16 +323,16 @@ msgstr ""
 "ne peut pas être '%d', a besoin d'être divisible par %d, car l'aléa est basé "
 "sur les secondes"
 
-#: grub-early.sh:3190
+#: grub-early.sh:3078
 msgid "configure your KVM virtual Machine to use only SATA disks"
 msgstr ""
 "configurez votre machine virtuelle KVM pour n'utiliser que des disques SATA"
 
-#: grub-early.sh:2204
+#: grub-early.sh:2082
 msgid "disk driver"
 msgstr "le pilote de disque"
 
-#: grub-early.sh:2214
+#: grub-early.sh:2092
 msgid ""
 "either configure your KVM virtual Machine to use SATA disks, or use a PS2 "
 "keyboard"
@@ -360,30 +340,50 @@ msgstr ""
 "configurez votre machine virtuelle KVM pour n'utiliser que des disques SATA "
 "ou utilisez un clavier PS2"
 
-#: grub-early.sh:1519
+#: grub-early.sh:1478
 msgid "grub binaries version differ: %s (%s) != %s (%s)"
 msgstr "la version des binaires grub diffère: %s (%s) != %s (%s)"
 
-#: grub-early.sh:1529
+#: grub-early.sh:1488
 msgid "grub modules directory '%s' not found"
 msgstr "dossier des modules grub '%s' non trouvé"
 
-#: grub-early.sh:2215
+#: grub-early.sh:2093
 msgid "instead of the usb one '%s'"
 msgstr "au lieu de celui USB '%s'"
 
-#: grub-early.sh:2210 grub-early.sh:3186
+#: grub-early.sh:2088 grub-early.sh:3074
 msgid "like '%s' for %s, or '%s', etc."
 msgstr "comme '%s' pour %s, ou '%s', etc."
 
-#: grub-early.sh:1454
+#: grub-early.sh:1413
 msgid "no device specified"
 msgstr "aucun prériphérique spécifié"
 
-#: grub-early.sh:1128
+#: grub-early.sh:1109
 msgid "not a PCI device%s"
 msgstr "n'est pas un périphérique PCI%s"
 
-#: grub-early.sh:2204
+#: grub-early.sh:2082
 msgid "usb keyboard driver"
 msgstr "le pilote de clavier USB"
+
+#: grub-early.sh:1625
+msgid ""
+"Theming can't be enabled at DAY time but not at NIGHT time, or the "
+"opposite"
+msgstr ""
+"Les thèmes ne peuvent être activés seulement pour le mode Jour et pas le "
+"mode Nuit, ou l'inverse"
+
+#: grub-early.sh:697
+msgid "ERROR"
+msgstr "ERREUR"
+
+#: grub-early.sh:682
+msgid "FATAL ERROR"
+msgstr "ERREUR FATALE"
+
+#: grub-early.sh:711
+msgid "WARNING"
+msgstr "AVERTISSEMENT"

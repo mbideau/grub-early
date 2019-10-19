@@ -69,7 +69,6 @@
 #      For example: I need the following vars to be defined:
 #       - GRUB_TIMEOUT='-1'
 #       - GRUB_TERMINAL_INPUT='at_keyboard' # to be able to use 'fr' keymap
-#       - GRUB_PRELOAD_MODULES='echo'  # when /etc/grub.d/10_linux is not patched
 #      And I also need to generate the 'fr' keymap in the standard grub dir.
 #      Maybe this script could also update the TERMINAL_INPUT var based on what
 #      it is done for the grub-early one.
@@ -83,21 +82,11 @@
 #      'icondir' variables to store shared icons. Icons can be renamed in the
 #      theme files to prevent collision between themes with the same icon names
 
-# TODO implement RANDOM_BG_IMAGE
-#   RANDOM_BG_IMAGE
-#       If true, will display a random background, according to the directory:
-#       \`$GRUB_BG_DIR'.
-#       For each background found, the main theme and inner theme will be copied
-#       with the directive \`desktop-image' replaced by the background file path.
-#       Then it will enable the \`RANDOM_THEME' feature.
-
 # TODO handle to set color_normal and color_highlight for each kernel menu entry
 
 # TODO try to reuse code from grub-mkconfig and /etc/grub.d (for example the
 #      '10_linux' file that generate the menu entries and also test for every
 #      possible initrd file) and /usr/lib/grub/grub-mkconfig_lib
-
-# TODO extract the theme generation process to another script
 
 
 # halt on first error
@@ -172,9 +161,9 @@ GRUB_EARLY_GFXMODE=auto
 GRUB_EARLY_GFXPAYLOAD=keep
 GRUB_EARLY_RANDOM_THEME=false
 GRUB_EARLY_GLOBAL_WRAPPER_CLASSES='default'
-GRUB_EARLY_LOCKED_DISK_MENU_TITLE='Unlock the disk'
+GRUB_EARLY_LOCKED_DISK_MENU_TITLE="$(__tt "Unlock the disk")"
 GRUB_EARLY_LOCKED_DISK_MENU_CLASSES='locked,encrypted,key,disk'
-GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE='Boot from disk'
+GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE="$(__tt "Boot from disk")"
 GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES=
@@ -446,18 +435,6 @@ CONFIGURATION
     RANDOM_THEME
         If true, will use a theme randomly.
 
-    RANDOM_BG_COLOR
-        A list of HEX colors (space separated) to be used as theme background.
-        If the value is 'generated', the colors will be generated randomly by
-        this script.
-        For each background color, the main theme and inner theme will be copied
-        with the directive \`desktop-color' set to the color.
-        Then it will enable the \`RANDOM_THEME' feature.
-
-    RANDOM_BG_COLOR_NODEFAULT
-        If true, will not includ the default theme in the themes, just use it to
-        generate all colored derivatives.
-
     DAY_TIME
         The time in the day after which only the following variables will be
         used instead of the "un-suffixed" ones:
@@ -465,8 +442,6 @@ CONFIGURATION
             - THEME_DEFAULT_DAY
             - TERMINAL_BG_COLOR_DAY
             - TERMINAL_BG_IMAGE_DAY
-            - RANDOM_BG_COLOR_DAY
-            - RANDOM_BG_COLOR_NODEFAULT_DAY.
        You must specify both: DAY_TIME and NIGHT_TIME.
 
     NIGHT_TIME
@@ -476,8 +451,6 @@ CONFIGURATION
             - THEME_DEFAULT_NIGHT
             - TERMINAL_BG_COLOR_NIGHT
             - TERMINAL_BG_IMAGE_NIGHT
-            - RANDOM_BG_COLOR_NIGHT
-            - RANDOM_BG_COLOR_NODEFAULT_NIGHT.
        You must specify both: DAY_TIME and NIGHT_TIME.
 
     NOPROGRESS
@@ -706,7 +679,7 @@ ENDCAT
 #  $2  string   a replacement string in the message (printf)
 #  $3  string   another replacement string in the message
 #  ..  string   a nth replacement string in the message
-MSG_PREFIX_LOCALIZED_FATAL_ERROR="$(__tt 'FATAL ERROR')"
+MSG_PREFIX_LOCALIZED_FATAL_ERROR="$(__tt "FATAL ERROR")"
 fatal_error()
 {
     _msg="$1\\n"
@@ -721,7 +694,7 @@ fatal_error()
 #  $2  string   a replacement string in the message (printf)
 #  $3  string   another replacement string in the message
 #  ..  string   a nth replacement string in the message
-MSG_PREFIX_LOCALIZED_ERROR="$(__tt 'ERROR')"
+MSG_PREFIX_LOCALIZED_ERROR="$(__tt "ERROR")"
 error()
 {
     _msg="$1\\n"
@@ -735,7 +708,7 @@ error()
 #  $2  string   a replacement string in the message (printf)
 #  $3  string   another replacement string in the message
 #  ..  string   a nth replacement string in the message
-MSG_PREFIX_LOCALIZED_WARNING="$(__tt 'WARNING')"
+MSG_PREFIX_LOCALIZED_WARNING="$(__tt "WARNING")"
 warning()
 {
     _msg="$1\\n"
@@ -1149,28 +1122,6 @@ get_driver_for_pci_device()
     ||true
 }
 
-# Generate a list of 9 HEX colors (space separated)
-generate_color_list()
-{
-    # from: https://stackoverflow.com/a/40278172
-    # shellcheck disable=SC2034
-    for i in $(seq 1 9); do
-        hexdump -n 3 -v -e '"#" 3/1 "%02X" "\n"' /dev/urandom
-    done
-}
-
-# check a list of HEX colors (space separated)
-check_color_list()
-{
-    # shellcheck disable=SC2048
-    for c in $*; do
-        if ! echo "$c"|grep -q '^#[a-fA-F0-9]\{6\}$'; then
-            return $FALSE
-        fi
-    done
-    return $TRUE
-}
-
 # select random theme name/bg
 # based on current seconds
 # $1  string  the list of theme names
@@ -1259,9 +1210,9 @@ check_opt_other_hosts()
     if [ "$opt_other_hosts" = '' ]; then
         return $TRUE
     fi
-    echo "$opt_other_hosts" \
-       | grep -q "^${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}"`
-                 `"\\(|${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}\\)*$"
+    grep_regex="^${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}"
+    grep_regex="${grep_regex}\\(|${_s}\\(\\w\\|-\\)\\+${_s}:${_s}[^|]\\+${_s}\\)*"'$'
+    echo "$opt_other_hosts" | grep -q "$grep_regex"
 }
 
 # get machine UUID to uniquely identify the host
@@ -1556,9 +1507,7 @@ for v in %s_HOUR \
          THEMES_DIR_%s \
          THEME_DEFAULT_%s \
          TERMINAL_BG_COLOR_%s \
-         TERMINAL_BG_IMAGE_%s \
-         RANDOM_BG_IMAGE_%s \
-         RANDOM_BG_COLOR_%s
+         TERMINAL_BG_IMAGE_%s
 do
     # shellcheck disable=SC2059
     vday_name="$(printf "GRUB_EARLY_$v" "DAY")"
@@ -1679,38 +1628,10 @@ if bool "$day_night_mode"; then
     fi
 fi
 
-# keep on processing the rest of theming related vars
-RANDOM_BG_COLOR_ENABLED=false
-for s in $var_suffixes; do
-    var_suffix="$(if [ "$s" != "$FALSE" ]; then echo "_$s"; fi)"
-    var_text="$(  if [ "$s" != "$FALSE" ]; then echo " ($s)"; fi)"
-
-    # handle GRUB_EARLY_RANDOM_BG_COLOR option value
-    eval 'random_bg_c="$GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'"'
-    if bool "$THEME_ENABLED" && [ "$random_bg_c" != '' ]; then
-        if [ "$random_bg_c" = 'generated' ]; then
-            random_bg_c="$(generate_color_list)"
-            eval 'GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'="$random_bg_c"'
-            debug "Colors generated$var_text: %s" "$(printf "%s" "$random_bg_c"|tr '\n' ',')"
-        fi
-        if ! check_color_list "$random_bg_c"; then
-            fatal_error "$(__tt "Invalid color list for option '%s' (%s)")" \
-                        "GRUB_EARLY_RANDOM_BG_COLOR$var_suffix" "$random_bg_c"
-        fi
-        RANDOM_BG_COLOR_ENABLED=true
-    fi
-done
-
-# random theme enabling
-if ! bool "$GRUB_EARLY_RANDOM_THEME"; then
-    if bool "$RANDOM_BG_COLOR_ENABLED" \
-    || [ "$GRUB_EARLY_RANDOM_BG_IMAGE" != '' ]    \
-    || [ "$GRUB_EARLY_RANDOM_BG_IMAGE_DAY" != '' ]; then
-        GRUB_EARLY_RANDOM_THEME=true
-        debug "Enabling RANDOM_THEME"
-    fi
+# theming is enabled and random theme is enabled
+if bool "$THEME_ENABLED" && bool "$GRUB_EARLY_RANDOM_THEME"; then
+    info "$(__tt "Random theme mode enabled")"
 fi
-
 
 # check other hosts option
 if ! check_opt_other_hosts; then
@@ -1982,65 +1903,11 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
             # theme dir source
             eval 'theme_dir_src="$GRUB_EARLY_THEMES_DIR'"$var_suffix"'"'
 
-            # no random background color
-            eval 'random_bg_color="$GRUB_EARLY_RANDOM_BG_COLOR'"$var_suffix"'"'
+            # copy theme dir
             # shellcheck disable=SC2154
-            if [ "$random_bg_color" = '' ]; then
-                info "$(__tt "Copying themes dir%s '%s' to '%s'")" \
-                     "$var_text" "$theme_dir_src/*" "$GRUB_THEMES_DIR/"
-                cp -r "$theme_dir_src"/* "$GRUB_THEMES_DIR"/
-
-            # random background color
-            else
-
-                # default theme
-                eval 'default_theme="$GRUB_EARLY_THEME_DEFAULT'"$var_suffix"'"'
-
-                # if default theme should be included
-                eval 'nodefault="$GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT'"$var_suffix"'"'
-                if [ "$nodefault" = '' ] || ! bool "$nodefault"; then
-
-                    # copy default (first) theme
-                    if [ ! -d "$GRUB_THEMES_DIR/$default_theme" ]; then
-                        info "$(__tt "Copying default theme%s '%s' to '%s'")" \
-                             "$var_text" "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
-                        cp -r "$theme_dir_src/$default_theme" "$GRUB_THEMES_DIR/"
-                    fi
-
-                    # update theme names
-                    eval 'ALL_THEME_NAMES'"$var_suffix"'="$default_theme"'
-
-                else
-                    debug "Default theme$var_text '%s' is excluded by user demand (%s)" \
-                        "$default_theme" "GRUB_EARLY_RANDOM_BG_COLOR_NODEFAULT$var_suffix"
-
-                    # update theme names
-                    eval 'ALL_THEME_NAMES'"$var_suffix"'='
-                fi
-
-                # generate derivative from the default theme with the background color changed
-                info "$(__tt "Generating random background theme derivatives%s ...")" \
-                     "$var_text"
-                for c in $random_bg_color; do
-                    t_name="$(echo "$c"|sed 's/^#/'"$default_theme"'_/')"
-                    t_path="$GRUB_THEMES_DIR/$t_name"
-                    debug " - %s" "$t_name"
-                    cp -r "$theme_dir_src/$default_theme" "$t_path"
-                    sed_cmd='s/^[[:blank:]]*#\?\([[:blank:]]*desktop-color'`
-                            `'[[:blank:]]*:[[:blank:]]*\)"[^"]\+"/\1"'"$c"'"/g'
-                    sed "$sed_cmd" -i "$t_path/$GRUB_THEME_FILENAME"
-                    if [ -w "$t_path/$GRUB_THEME_INNER_FILENAME" ]; then
-                        sed "$sed_cmd" -i "$t_path/$GRUB_THEME_INNER_FILENAME"
-                    fi
-                    if [ -w "$t_path/$GRUB_THEME_ONDISK_FILENAME" ]; then
-                        sed "$sed_cmd" -i "$t_path/$GRUB_THEME_ONDISK_FILENAME"
-                    fi
-                    eval 'ALL_THEME_NAMES'"$var_suffix"'="$ALL_THEME_NAMES'"$var_suffix"' $t_name"'
-                done
-
-                debug "Theme names$var_text updated: %s" \
-                    "$(eval 'echo "$ALL_THEME_NAMES'"$var_suffix"'"'|trim)"
-            fi
+            info "$(__tt "Copying themes dir%s '%s' to '%s'")" \
+                 "$var_text" "$theme_dir_src/*" "$GRUB_THEMES_DIR/"
+            cp -r "$theme_dir_src"/* "$GRUB_THEMES_DIR"/
         done
     fi
 
@@ -2560,7 +2427,7 @@ ENDCAT
 
         # current host configuration is in another file
         params_host_path="$host_dir/$GRUB_HOST_CONFIGURATION_FILENAME"
-        info "$(__tt "Creating parameters file '%s'" )""$params_host_path"
+        info "$(__tt "Creating parameters file '%s'")" "$params_host_path"
         touch "$params_host_path"
 
     # not in multi-host mode
@@ -3096,8 +2963,12 @@ submenu "'"'"$GRUB_EARLY_LOCKED_DISK_MENU_TITLE"'"'" $(
 
 # unlocking the disk
 unlock_disk
-$BOOT_GRUB_ON_DISK_MENU_ENTRY
-$EXTRA_MENU_ENTRY"
+
+# if unlocking was successful
+if disk_is_unlocked; then
+	$(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 4)
+    $(echo "$EXTRA_MENU_ENTRY"|indent 4)
+fi"
     UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY"`
                            `"$(echo "$UNLOCK_DISK_ENTRY"|indent "$indentation")"
     if ! bool "$GRUB_EARLY_NO_MENU"; then

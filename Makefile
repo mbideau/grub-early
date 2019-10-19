@@ -91,12 +91,12 @@ GETTEXTFLAGS       ?=
 GETTEXTFLAGS_ALL   := -d "$(TEXTDOMAIN)"
 XGETTEXTFLAGS      ?=
 XGETTEXTFLAGS_ALL  := --keyword --keyword=__tt \
-	                   --language=shell --from-code=$(CHARSET) \
-	                   --width=$(WIDTH)       \
-	                   --sort-output          \
-	                   --foreign-user         \
-	                   --package-name="$(PACKAGE_NAME)" --package-version="$(PACKAGE_VERS)" \
-	                   --msgid-bugs-address="$(MAIL_BUGS_TO)"
+	                  --language=shell --from-code=$(CHARSET) \
+	                  --width=$(WIDTH)       \
+	                  --sort-output          \
+	                  --foreign-user         \
+	                  --package-name="$(PACKAGE_NAME)" --package-version="$(PACKAGE_VERS)" \
+	                  --msgid-bugs-address="$(MAIL_BUGS_TO)"
 MSGFMTFLAGS        ?=
 MSGFMTFLAGS_ALL    := --check --check-compatibility
 MSGINITFLAGS       ?=
