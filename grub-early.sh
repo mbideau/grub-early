@@ -58,6 +58,10 @@
 #            like: 'insmod "\$prefix/$GRUB_FORMAT/XX.mod"'
 #
 
+# TODO document that, in order to set the 'background_image' value for a theme
+#      it should define a commented directive 'terminal-image', like:
+#         # terminal-image: "term_fake_transparency_bg.png"
+
 # TODO to have menu entry classes for memtest the file
 #      '/etc/grub.d/20_memtest86+' have to be patched.
 #      Use either, the following command:
@@ -87,6 +91,11 @@
 # TODO try to reuse code from grub-mkconfig and /etc/grub.d (for example the
 #      '10_linux' file that generate the menu entries and also test for every
 #      possible initrd file) and /usr/lib/grub/grub-mkconfig_lib
+
+# TODO implement everything to be able to package it
+
+# TODO generate better font (extends char range, and font size required by themes)
+#      @see: http://wiki.rosalab.ru/en/index.php/Grub2_theme_tutorial#Font_creation_guide
 
 
 # halt on first error
@@ -128,8 +137,7 @@ GRUB_THEME_FILENAME=theme.txt
 GRUB_THEME_INNER_FILENAME=theme-inner.txt
 GRUB_THEME_ONDISK_FILENAME=theme-ondisk.txt
 GRUB_THEMES_DIR=$GRUB_MEMDISK_DIR/themes
-#GRUB_BG_DIR=$GRUB_MEMDISK_DIR/backgrounds
-GRUB_TERMINAL_BG_IMAGE=$GRUB_MEMDISK_DIR/terminal_background.tga
+GRUB_TERMINAL_BG_IMAGE_DIR=$GRUB_MEMDISK_DIR
 
 # translation
 GETTEXT="$(command -v gettext 2>/dev/null||command -v echo)"
@@ -1180,6 +1188,32 @@ ENDCAT
     fi
 }
 
+# define terminal background color
+# based on the current theme name
+#  $1  string  the theme names (separated by space)
+set_term_background_image()
+{
+    t_count=0
+    for t in $1; do
+        t_path="$GRUB_THEMES_DIR/$t/$GRUB_THEME_FILENAME"
+        t_bg_image="$(grep '^[[:blank:]]*#\?[[:blank:]]*terminal-image'`
+                           `'[[:blank:]]*:[[:blank:]]*"[^"]\+"' "$t_path" \
+                     |sed 's/^[[:blank:]]*#\?[[:blank:]]*terminal-image'`
+                          `'[[:blank:]]*:[[:blank:]]*"\([^"]\+\)"/\1/'||true)"
+        if [ "$t_bg_image" != '' ]; then
+            t_cond="$(if [ "$t_count" -eq 0 ]; then echo 'if'; else echo 'elif'; fi)"
+            t_count="$((t_count + 1))"
+cat <<ENDCAT
+$t_cond [ "\$theme_name" = "$t" ]; then
+    background_image -m stretch "\$prefix${h_prefix}/themes/\$theme_name/$t_bg_image"
+ENDCAT
+        fi
+    done
+    if [ "$t_count" -gt 0 ]; then
+        echo 'fi'
+    fi
+}
+
 # define theme's modules to load
 #  $1  string  the themes names (separated by space)
 load_theme_modules()
@@ -1789,10 +1823,7 @@ if bool "$multi_host_mode"; then
 
     # update variables with host dir prefix
     GRUB_THEMES_DIR=${GRUB_MEMDISK_DIR}${host_prefix}/themes
-    # TODO makes the backgrounds specific to the theme
-    #GRUB_BG_DIR=${GRUB_MEMDISK_DIR}${host_prefix}/backgrounds
-    # TODO makes the image specific to the theme
-    GRUB_TERMINAL_BG_IMAGE=${GRUB_MEMDISK_DIR}${host_prefix}/terminal_background.tga
+    GRUB_TERMINAL_BG_IMAGE_DIR=${GRUB_MEMDISK_DIR}${host_prefix}
 fi
 
 
@@ -1908,16 +1939,17 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
             info "$(__tt "Copying themes dir%s '%s' to '%s'")" \
                  "$var_text" "$theme_dir_src/*" "$GRUB_THEMES_DIR/"
             cp -r "$theme_dir_src"/* "$GRUB_THEMES_DIR"/
+
+            # ensure terminal background image is up to date
+            eval 'bg_image_src="$GRUB_EARLY_TERMINAL_BG_IMAGE'"$var_suffix"'"'
+            # shellcheck disable=SC2154
+            if bool "$THEME_ENABLED" && [ -f "$bg_image_src" ]; then
+                info "$(__tt "Copying terminal background image dir%s '%s' to '%s'")" \
+                    "$var_text" "$bg_image_src" "$GRUB_TERMINAL_BG_IMAGE_DIR"
+                cp "$bg_image_src" "$GRUB_TERMINAL_BG_IMAGE_DIR"/
+            fi
         done
     fi
-
-    # TODO implement day/night mode with suffixes like above
-    # TODO makes the image specific to the theme
-#     # ensure terminal background image is up to date
-#     if bool "$THEME_ENABLED" && [ -f "$GRUB_EARLY_TERMINAL_BG_IMAGE" ]; then
-#         info "Copying terminal background image dir '%s' to '%s'" "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
-#         cp "$GRUB_EARLY_TERMINAL_BG_IMAGE" "$GRUB_TERMINAL_BG_IMAGE"
-#     fi
 fi
 
 # detect required disk UUIDs to unlock /boot
@@ -2620,7 +2652,16 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background image
-background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE")
+background_image -m stretch "\$prefix${h_prefix}/$(basename "$GRUB_EARLY_TERMINAL_BG_IMAGE")"
+ENDCAT
+
+            # no background color defined, but theming enabled
+            elif bool "$THEME_ENABLED"; then
+                cat >> "$params_host_path" <<ENDCAT
+
+# set terminal background image
+insmod gfxterm_background
+$(set_term_background_image "$ALL_THEME_NAMES")
 ENDCAT
             fi
 
@@ -2659,9 +2700,21 @@ ENDCAT
 
 # set terminal background image
 if [ "\$day_night_mode" = "day" ]; then
-    background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE_DAY")
+    background_image -m stretch "\$prefix${h_prefix}/$(basename "$GRUB_EARLY_TERMINAL_BG_IMAGE_DAY")"
 else
-    background_image -m stretch \$prefix${h_prefix}/$(basename "$GRUB_TERMINAL_BG_IMAGE_NIGHT")
+    background_image -m stretch "\$prefix${h_prefix}/$(basename "$GRUB_EARLY_TERMINAL_BG_IMAGE_NIGHT")"
+fi
+ENDCAT
+            # no background color defined, but theming enabled
+            elif bool "$THEME_ENABLED"; then
+                cat >> "$params_host_path" <<ENDCAT
+
+# set terminal background image
+insmod gfxterm_background
+if [ "\$day_night_mode" = "day" ]; then
+    $(set_term_background_image "$ALL_THEME_NAMES_DAY"|indent 4)
+else
+    $(set_term_background_image "$ALL_THEME_NAMES_NIGHT"|indent 4)
 fi
 ENDCAT
             fi
