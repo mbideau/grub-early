@@ -296,8 +296,8 @@ msgstr ""
 "périphérique '%s' (pas un périphérique?)"
 
 #: grub-early.sh:164
-msgid "Unlock the disk"
-msgstr "Dévérouiller le disque"
+msgid "Unlock the disk (%s)"
+msgstr "Dévérouiller le disque (%s)"
 
 #: grub-early.sh:2013
 msgid "You can't have keymap '%s' and have no PS2 nor USB keyboards"
