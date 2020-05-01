@@ -180,7 +180,7 @@ GRUB_EARLY_LOCKED_DISK_MENU_CLASSES='locked,encrypted,key,disk'
 GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE="$(__tt "Boot from disk")"
 GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
-GRUB_EARLY_PRELOAD_MODULES=
+GRUB_EARLY_PRELOAD_MODULES="help minicmd videoinfo reboot halt"
 GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK='echo linux configfile'
 GRUB_EARLY_CORE_EFI_REL_DEST=EFI/debian/grubx64.efi
 
@@ -2010,7 +2010,7 @@ if [ "$locale_short" != 'en' ]; then
     locale_dest="$locale_dest_dir/$locale_dest_filename"
     if [ ! -d "$locale_dest_dir" ]; then
         debug "Creating directory '$locale_dest_dir'"
-        mkdir -p "$GRUB_EARLY_DIR_MODE" -p "$locale_dest_dir"
+        mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$locale_dest_dir"
     fi
     info "$(__tt "Copying locale '%s'' to '%s'")" "$GRUB_EARLY_LOCALE" "$locale_dest"
     cp "$GRUB_PREFIX/share/locale/${locale_short}/LC_MESSAGES/grub.mo" "$locale_dest"
@@ -2032,7 +2032,7 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     font_dest="$font_dest_dir/$font_dest_filename"
     if [ ! -d "$font_dest_dir" ]; then
         debug "Creating directory '$font_dest_dir'"
-        mkdir -p "$GRUB_EARLY_DIR_MODE" -p "$font_dest_dir"
+        mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$font_dest_dir"
     fi
     info "$(__tt "Copying font '%s' to '%s'")" "$(basename "$font_src" '.pf2')" "$font_dest"
     cp "$font_src" "$font_dest"
