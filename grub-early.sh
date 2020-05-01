@@ -182,6 +182,7 @@ GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES="help minicmd videoinfo reboot halt"
 GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK='echo linux configfile'
+GRUB_EARLY_SET_VARS_GRUB_ONDISK="feature_default_font_path=y"
 GRUB_EARLY_CORE_EFI_REL_DEST=EFI/debian/grubx64.efi
 
 # internal const
@@ -518,6 +519,11 @@ CONFIGURATION
         This option may be set to a list of GRUB module names separated by spaces.
         Each module will be loaded before switching to grub on disk.
         Default to \`$GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK'.
+
+    SET_VARS_GRUB_ONDISK
+        This option may be set to a list of key=value pairs separated by spaces.
+        Each var will be set before switching to grub on disk.
+        Default to \`$GRUB_EARLY_SET_VARS_GRUB_ONDISK'.
 
     INSTALL_ARGS
         Extra arguments to pass to \`grub-bios-setup'.
@@ -2010,6 +2016,7 @@ if [ "$locale_short" != 'en' ]; then
     locale_dest="$locale_dest_dir/$locale_dest_filename"
     if [ ! -d "$locale_dest_dir" ]; then
         debug "Creating directory '$locale_dest_dir'"
+	# shellcheck disable=SC2174
         mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$locale_dest_dir"
     fi
     info "$(__tt "Copying locale '%s'' to '%s'")" "$GRUB_EARLY_LOCALE" "$locale_dest"
@@ -2032,6 +2039,7 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     font_dest="$font_dest_dir/$font_dest_filename"
     if [ ! -d "$font_dest_dir" ]; then
         debug "Creating directory '$font_dest_dir'"
+	# shellcheck disable=SC2174
         mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$font_dest_dir"
     fi
     info "$(__tt "Copying font '%s' to '%s'")" "$(basename "$font_src" '.pf2')" "$font_dest"
@@ -3111,10 +3119,19 @@ submenu "'"'"$GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE"'"'" $(
     fi
     BOOT_GRUB_ON_DISK_ENTRY=
     if [ "$GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK" != '' ]; then
-        BOOT_GRUB_ON_DISK_ENTRY="
+        BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
 
 # load grub module before changing \$root and \$prefix
 $(for m in $GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK; do echo "insmod $m"; done)"
+    fi
+    if [ "$GRUB_EARLY_SET_VARS_GRUB_ONDISK" != '' ]; then
+        # TODO support spaces
+        BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
+
+# set vars before switching to grub on disk
+$(for kv in $GRUB_EARLY_SET_VARS_GRUB_ONDISK; do
+    echo "set $(echo "$kv"|sed 's/^\([^=]\+\)=.*$/\1/g')="'"'"$(echo "$kv"|sed 's/^[^=]\+=\(.*\)$/\1/g')"'"'
+done)"
     fi
 
     # on disk grub file path
