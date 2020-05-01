@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Replaces 'grub-install' utility to provide a more user-friendly grub2 early stage
-# It adds extra feature support to grub2 'core.img'. See help for more informations.
+# It adds extra feature support to grub2 'core.img/core.efi'. See help for more informations.
 #
 # inspired by: https://wiki.archlinux.org/index.php/GRUB/Tips_and_tricks#Manual_configuration_of_core_image_for_early_boot
 #
@@ -22,15 +22,15 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-# 
+#
 
 # TODO document that, in order to prevent a terminal box poping out when booting
 #      from grub 'on-disk', the user should have patched the file
@@ -108,23 +108,27 @@ GRUB_MKIMAGE=$GRUB_PREFIX/bin/grub-mkimage
 GRUB_PROBE=$GRUB_PREFIX/sbin/grub-probe
 GRUB_BIOS_SETUP=$GRUB_PREFIX/sbin/grub-bios-setup
 GRUB_SCRIPT_CHECK=$GRUB_PREFIX/bin/grub-script-check
-GRUB_MODDIR=$GRUB_PREFIX/lib/grub/i386-pc
 GRUB_CONFIG_DEFAULT=/etc/default/grub
 BOOT_DIR=/boot
 GRUB_DIR=$BOOT_DIR/grub
 GRUB_CFG=$GRUB_DIR/grub.cfg
 GRUB_EARLY_DIR=$GRUB_DIR/early
-GRUB_CORE_FORMAT=i386-pc
+GRUB_FORMAT_PCBIOS=i386-pc
+GRUB_FORMAT_EFI=x86_64-efi
+GRUB_MODDIR_PCBIOS=$GRUB_PREFIX/lib/grub/$GRUB_FORMAT_PCBIOS
+GRUB_MODDIR_EFI=$GRUB_PREFIX/lib/grub/$GRUB_FORMAT_EFI
 GRUB_CORE_IMG=$GRUB_EARLY_DIR/core.img
+GRUB_CORE_EFI=$GRUB_EARLY_DIR/core.efi
 GRUB_CORE_COMPRESSION=auto
 GRUB_CORE_MEMDISK=$GRUB_EARLY_DIR/memdisk.tar
 GRUB_CORE_CFG=$GRUB_EARLY_DIR/load.cfg
 GRUB_BOOT_IMG=$GRUB_EARLY_DIR/boot.img
-GRUB_BOOT_IMG_SRC=$GRUB_MODDIR/boot.img
+GRUB_BOOT_IMG_SRC=$GRUB_MODDIR_PCBIOS/boot.img
 GRUB_MEMTEST_BIN=$BOOT_DIR/memtest86+.bin
 GRUB_MEMDISK_DIR=$GRUB_EARLY_DIR/memdisk
 GRUB_NORMAL_CFG=$GRUB_MEMDISK_DIR/normal.cfg
-GRUB_EARLY_MODDIR=$GRUB_MEMDISK_DIR/$GRUB_CORE_FORMAT
+GRUB_EARLY_MODDIR_PCBIOS=$GRUB_MEMDISK_DIR/$GRUB_FORMAT_PCBIOS
+GRUB_EARLY_MODDIR_EFI=$GRUB_MEMDISK_DIR/$GRUB_FORMAT_EFI
 GRUB_HOST_DETECTION_FILENAME=detect.cfg
 GRUB_HOST_CONFIGURATION_FILENAME=params.cfg
 GRUB_HOST_MENUS_FILENAME=menus.cfg
@@ -156,6 +160,8 @@ __tt()
 }
 
 # user defaults
+GRUB_EARLY_DIR_MODE=0775
+GRUB_EARLY_EFI_DIR=
 GRUB_EARLY_DEFAULT=
 GRUB_EARLY_FALLBACK=
 GRUB_EARLY_TIMEOUT=15
@@ -175,7 +181,8 @@ GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE="$(__tt "Boot from disk")"
 GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES=
-GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK='echo linux'
+GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK='echo linux configfile'
+GRUB_EARLY_CORE_EFI_REL_DEST=EFI/debian/grubx64.efi
 
 # internal const
 NL="
@@ -199,26 +206,30 @@ usage()
 {
     cat <<ENDCAT
 
-$THIS_SCRIPT_NAME - create a customized _grub2_ \`core.img' and install it to a device
+$THIS_SCRIPT_NAME - create a customized _grub2_ core.img/core.efi and install it to a device/EFI directory
 
 USAGE
 
     $THIS_SCRIPT_NAME [-h|--help]
         Display help
 
+    $THIS_SCRIPT_NAME --efi-dir /mnt/efi
+        Create and install core.efi to /mnt/efi/EFI/debian/grubx64.efi.
+
     $THIS_SCRIPT_NAME [-c|--config FILE] [-v|--verbosity LEVEL] DEVICE
-        Create and install \`core.img' to specified device
+        Create and install core.img to specified device.
 
     $THIS_SCRIPT_NAME --no-install DEVICE
-        Create but not install \`core.img' to specified device
+        Create but not install core.img to specified device.
 
     $THIS_SCRIPT_NAME ..OPTIONS.. DEVICE
-        Create and install \`core.img' to specified device with options
+        Create and install core.img to specified device with options.
 
 ARGUMENTS
 
     DEVICE
-        Path to a device (i.e.: /dev/sdx).
+        (optional when option \`--efi-dir' is given)
+        Path to a device (i.e.: /dev/sdx) that will be written its MBR BIOS by grub.
         It can also be one of the following:
          - device name       (NAME   in \`lsblk')
          - device model      (MODEL  in \`lsblk')
@@ -237,7 +248,7 @@ OPTIONS
             $V_DEBUG : debug
 
     -n|--no-install
-        Do not install grub to MBR BIOS of specified disk.
+        Do not install grub to MBR BIOS of specified disk/EFI partition.
         It is not a dry-run: it will execute everything (modifying files)
         but not make the last step of installation.
 
@@ -262,15 +273,21 @@ OPTIONS
         This option is usefull to prevent installing to a bad device if their
         order has changed at boot (/dev/sda becoming /dev/sdb for example).
 
+    -e|--efi-dir DIR
+        Path to a mounted EFI partition directory.
+        Force the EFI format for grub core image.
 
 FILES
 
     $GRUB_CONFIG_DEFAULT
         Default configuration file path.
 
-    $GRUB_MODDIR
-        Default grub2 modules directory.
-    
+    $GRUB_MODDIR_PCBIOS
+        Default grub2 modules directory (for PC BIOS setup).
+
+    $GRUB_MODDIR_EFI
+        Default grub2 modules directory (for EFI setup).
+
     $GRUB_DIR
         Default grub2 \`boot' directory.
 
@@ -309,6 +326,11 @@ CONFIGURATION
 
     This script can be configured with variables in a configuration file.
     Variables must be prefixed by \`GRUB_EARLY_'.
+
+    EFI_DIR
+        Path to a mounted EFI partition directory.
+        Force the EFI format for grub core image.
+        Default to: \`$GRUB_EARLY_EFI_DIR'.
 
     CORE_CFG
         Use a custom configuration script for early grub instead of the default
@@ -350,7 +372,7 @@ CONFIGURATION
     ALTERNATIVE_MENU
         The content of a submenu to display when the SHIFT key is pressed
         (at boot time, before/during grub2 loading).
-    
+
     CRYPTOMOUNT_OPTS
         Options passed to \`cryptomount' (i.e.: --keyfile (hd2,msdos1)/secret.bin).
         I recommend using the patched \`cryptomount' (http://grub.johnlane.ie/).
@@ -397,7 +419,7 @@ CONFIGURATION
         graphical terminal is in use or because ‘GFXPAYLOAD’ is set,
         then this script will normally load all available GRUB video drivers
         and use the one most appropriate for your hardware. If you need to
-        override this for some reason, then you can set this option. 
+        override this for some reason, then you can set this option.
 
     TERMINAL_BG_COLOR
         A color to set the background of the terminal to (i.e.: #E0E0E0).
@@ -414,7 +436,7 @@ CONFIGURATION
     THEME_DEFAULT
         The name of the default theme if there are multiple themes in the
         themes directory \`THEMES_DIR'. Else it default to the one found.
-    
+
     LOCKED_DISK_MENU_TITLE
         The title of the 'disk locked' submenu entry.
         Default to: \`$GRUB_EARLY_LOCKED_DISK_MENU_TITLE'.
@@ -482,7 +504,7 @@ CONFIGURATION
     PRELOAD_MODULES
         The same as the "standard" \`GRUB_PRELOAD_MODULES' option.
         This option may be set to a list of GRUB module names separated by spaces.
-        Each module will be loaded as early as possible, at the start of $( 
+        Each module will be loaded as early as possible, at the start of $(
         basename "$GRUB_CFG")
         Default to \`$GRUB_EARLY_PRELOAD_MODULES'.
 
@@ -544,6 +566,9 @@ HOST ARCHIVE FILE
 
 EXAMPLES
 
+    # install the custom \`core.efi' build by \`grub-early' to EFI partition /mnt/efi
+    > grub-early --efi-dir /mnt/efi
+
     # install the custom \`core.img' build by \`grub-early' with default configuration
     > grub-early /dev/vda
 
@@ -567,7 +592,7 @@ PROBLEM SOLVED
     The problem this script solves can be summarized with:
     "A more user-friendly grub2 early stage".
 
-    It only targets grub2 MBR installations with /boot partition encrypted.
+    It only targets grub2 installations with /boot partition encrypted.
 
     The current grub2 implementation (i.e.: 2.02) can deal with an
     encrypted /boot partition by embeding decryption code in its early
@@ -652,12 +677,12 @@ LICENSE
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-    
+
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-    
+
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -981,13 +1006,14 @@ get_grub_modules_for_disk_command()
     case "$1" in
         memdisk) modules="$modules memdisk tar" ;;
         proc)    modules="$modules procfs" ;;
-        hd*)     modules="$modules biosdisk" ;;
+        hd*)     modules="$modules disk" ;;
         ahci*|ata*|pata*|scsi*) modules="$modules $(echo "$1"|sed 's/[0-9]\+\(,[^)]\+\)\?$//g')" ;;
     esac
     if echo "$1"|grep -q ',[^)]\+$'; then
         part="$(echo "$1"|sed 's/^.*,//g;s/[0-9]\+$//g')"
         case "$part" in
             msdos) modules="$modules part_msdos" ;;
+            gpt)   modules="$modules part_gpt" ;;
         esac
     fi
     echo "$modules"
@@ -1396,9 +1422,9 @@ contains_a_grub_module_that_disable_firmware_driver()
 # options definition
 # using GNU getopt here, install it if not the default on your distro
 options_definition="$( \
-    getopt --options hv:c:no:mi:p \
+    getopt --options hv:c:no:mi:pe: \
            --longoptions 'help,verbosity:,config:,no-install,other-hosts:,'`
-                         `'multi-hosts,host-id,dev-from-child-part-uuid' \
+                         `'multi-hosts,host-id,dev-from-child-part-uuid,efi-dir:' \
            --name "$THIS_SCRIPT_NAME" \
            -- "$@")"
 if [ "$options_definition" = '' ]; then
@@ -1414,16 +1440,18 @@ opt_other_hosts=
 opt_multi_hosts=false
 opt_host_id=
 opt_part_uuid=false
+opt_efi_dir=
 while true; do
     case "$1" in
         -h | --help        ) opt_help=true        ; shift   ;;
-        -v | --verbosity   ) VERBOSITY=$2         ; shift 2 ;;
-        -c | --config      ) config=$2            ; shift 2 ;;
+        -v | --verbosity   ) VERBOSITY="$2"       ; shift 2 ;;
+        -c | --config      ) config="$2"          ; shift 2 ;;
         -n | --no-install  ) opt_noinstall=true   ; shift ;;
-        -o | --other-hosts ) opt_other_hosts=$2   ; shift 2 ;;
+        -o | --other-hosts ) opt_other_hosts="$2" ; shift 2 ;;
         -m | --multi-hosts ) opt_multi_hosts=true ; shift ;;
-        -i | --host-id     ) opt_host_id=$2       ; shift 2 ;;
+        -i | --host-id     ) opt_host_id="$2"     ; shift 2 ;;
         -p | --part-uuid   ) opt_part_uuid=true   ; shift ;;
+        -e | --efi-dir     ) opt_efi_dir="$2"     ; shift 2 ;;
         -- ) shift; break ;;
         * ) break ;;
     esac
@@ -1440,28 +1468,48 @@ if [ ! -r "$config" ]; then
     fatal_error "$(__tt "Configuration file '%s' doesn't exist nor is readable")" "$config"
 fi
 
-# device argument
+# device argument and efi directory (option)
+device=
 if [ "$1" != "" ]; then
     device="$1"
+
+# EFI option
+elif [ "$opt_efi_dir" != '' ]; then
+    if [ ! -d "$opt_efi_dir" ]; then
+        fatal_error "$(__tt "directory '%s' do not exists")" "$opt_efi_dir"
+    fi
+    # TODO make it support spaces
+    efi_part="$(lsblk --list --output "PATH,MOUNTPOINT"|grep "^[^ ]\\+ \\+$opt_efi_dir\$" \
+                                                       |awk '{print $1}'|trim||true)"
+    debug "EFI partition: %s" "$efi_part"
+    if [ "$efi_part" = '' ]; then
+        fatal_error "EFI partition with mount point '%s' not found" "$opt_efi_dir"
+    fi
+
+    efi_dev="$(get_top_level_parent_device "$efi_part" 'path')"
+    debug "Found top level EFI device: %s" "$efi_dev"
 else
-    fatal_error "$(__tt "no device specified")"
+    fatal_error "$(__tt "no device or EFI directory specified")"
 fi
 
 # partition UUID option
+part_uuid=
 if bool "$opt_part_uuid"; then
-    debug "Device child partition UUID: %s" "$device"
-    part_dev="$(lsblk --list --output "PATH,UUID"|grep "^[^ ]\\+ \\+$device\$" \
+    part_uuid="$1"
+    debug "Device child partition UUID: %s" "$part_uuid"
+    # TODO make it support spaces
+    part_dev="$(lsblk --list --output "PATH,UUID"|grep "^[^ ]\\+ \\+$part_uuid\$" \
                                                  |awk '{print $1}'|trim||true)"
     debug "Device child partition PATH: %s" "$part_dev"
     if [ "$part_dev" = '' ]; then
-        fatal_error "Device with partition UUID '%s' not found" "$device"
+        fatal_error "Device with partition UUID '%s' not found" "$part_uuid"
     fi
     device="$(get_top_level_parent_device "$part_dev" 'path')"
     debug "Found top level device: %s" "$device"
 fi
 
-# not a device full path
-if ! lsblk "$device" >/dev/null 2>&1; then
+# not EFI and not a device full path
+if [ "$opt_efi_dir" = '' ] && ! lsblk "$device" >/dev/null 2>&1; then
     dev_found=false
     for key in NAME MODEL SERIAL WWN; do
         if lsblk --list --output "$key"|grep -q "^$device\$"; then
@@ -1480,7 +1528,9 @@ if ! lsblk "$device" >/dev/null 2>&1; then
         fatal_error "$(__tt "Invalid device '%s'")" "$device"
     fi
 fi
-debug "Device: %s" "$device"
+if [ "$opt_efi_dir" = '' ]; then
+    debug "Device: %s" "$device"
+fi
 
 
 # setup the hostname
@@ -1497,12 +1547,11 @@ debug "Sourcing configuration '%s'" "$config"
 b_version=
 b_last_vers=
 b_last_bin=
-for bin in \
-    "$GRUB_KBDCOMP" \
-    "$GRUB_MKIMAGE" \
-    "$GRUB_PROBE"   \
-    "$GRUB_BIOS_SETUP"
-do
+binaries_to_check="$GRUB_KBDCOMP $GRUB_MKIMAGE $GRUB_PROBE"
+if [ "$opt_efi_dir" = '' ]; then
+    binaries_to_check="$binaries_to_check $GRUB_BIOS_SETUP"
+fi
+for bin in $binaries_to_check; do
     if [ ! -x "$bin" ]; then
         fatal_error "$(__tt "Binary '%s' not found (at path: '%s')")" "$(basename "$bin")" "$bin"
     fi
@@ -1518,6 +1567,10 @@ do
 done
 
 # and grub module directory too
+GRUB_MODDIR="$GRUB_MODDIR_PCBIOS"
+if [ "$opt_efi_dir" != '' ]; then
+    GRUB_MODDIR="$GRUB_MODDIR_EFI"
+fi
 if [ ! -d "$GRUB_MODDIR" ]; then
     fatal_error "$(__tt "grub modules directory '%s' not found")" "$GRUB_MODDIR"
 fi
@@ -1614,7 +1667,7 @@ for s in $var_suffixes; do
             # list all theme names
             themes_names="$(find "$d" -maxdepth 1 -type d -not -path "$d" -printf "%P$NL")"
             eval 'ALL_THEME_NAMES'"$var_suffix"'="$themes_names"'
-            
+
             # check that they do not contain space or tab or newline
             IFS="$NL"
             for t in $themes_names; do
@@ -1716,7 +1769,7 @@ fi
 if [ ! -d "$GRUB_EARLY_DIR" ]; then
     info "$(__tt "Creating early directory '%s'")" "$GRUB_EARLY_DIR"
     # shellcheck disable=SC2174
-    mkdir -m 0700 -p "$GRUB_EARLY_DIR"
+    mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$GRUB_EARLY_DIR"
 fi
 if bool $GRUB_EARLY_EMPTY_MEMDISK_DIR; then
     info "$(__tt "Deleting memdisk directory '%s'")" "$GRUB_MEMDISK_DIR"
@@ -1725,7 +1778,7 @@ fi
 if [ ! -d "$GRUB_MEMDISK_DIR" ]; then
     info "$(__tt "Creating memdisk directory '%s'")" "$GRUB_MEMDISK_DIR"
     # shellcheck disable=SC2174
-    mkdir -m 0700 -p "$GRUB_MEMDISK_DIR"
+    mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$GRUB_MEMDISK_DIR"
 fi
 
 # list of configuration files to parse for extracting commands/modules
@@ -1815,7 +1868,7 @@ if bool "$multi_host_mode"; then
     if [ ! -d "$host_dir" ]; then
         info "$(__tt "Creating 'host' directory '%s'")" "$host_dir"
         # shellcheck disable=SC2174
-        mkdir -m 0700 -p "$host_dir"
+        mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$host_dir"
     fi
 
     # path related to host files are prefixed
@@ -1837,14 +1890,45 @@ if [ "$GRUB_EARLY_CORE_CFG" = '' ]; then
 # echo "Hit enter to continue grub-shell script ..."
 # read cont
 
-    # /!\ comments will be removed because at this stage they are not supported
-    cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
-set root=(memdisk)
-set prefix=(\$root)
+    # PC BIOS setup needs to have its prefix set to (memdisk)
+    if [ "$opt_efi_dir" = '' ]; then
+
+        # /!\ comments will be removed because at this stage they are not supported
+        cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+set root="(memdisk)"
+set prefix="(\$root)"
 
 set enable_progress_indicator=0
 
-normal \$prefix/$(basename "$GRUB_NORMAL_CFG")
+ENDCAT
+
+    # EFI setup
+    else
+
+        #default_root="($($GRUB_PROBE -t baremetal_hints "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g'))"
+        #default_root="($($GRUB_PROBE -t compatibility_hint "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g'))"
+        efi_fs_uuid="$($GRUB_PROBE -t fs_uuid "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g')"
+
+        # /!\ comments will be removed because at this stage they are not supported
+        cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+insmod echo
+insmod search
+search --fs-uuid --no-floppy --set=root $efi_fs_uuid
+
+set prefix="(\$root)/EFI/debian"
+
+echo "root  : \$root"
+echo "prefix: \$prefix"
+
+ENDCAT
+    fi
+
+    # /!\ comments will be removed because at this stage they are not supported
+    cat >> "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+set default_prefix="\$prefix"
+
+insmod normal
+normal "\$prefix/$(basename "$GRUB_NORMAL_CFG")"
 ENDCAT
 
 # custom core.cfg provided
@@ -1864,6 +1948,20 @@ modules_core="$(
     for cmd in $(get_command_list "$GRUB_CORE_CFG"); do
         get_cmd_grub_modules "$cmd"
     done|uniquify -s)"
+
+# EFI setup
+if [ "$opt_efi_dir" != '' ]; then
+
+    # grub modules for EFI partition
+    debug "Getting grub modules for EFI partition"
+    modules_efi_crypto="$($GRUB_PROBE -t abstraction "$opt_efi_dir"|uniquify --to-sep-space)"
+    modules_efi_disks="$($GRUB_PROBE -t partmap "$opt_efi_dir"|sed 's/^/part_/g' \
+                                                          |uniquify --to-sep-space)"
+    modules_efi_fs="$($GRUB_PROBE -t fs "$opt_efi_dir"|uniquify --to-sep-space)"
+    modules_efi_devices="$modules_efi_crypto $modules_efi_disks $modules_efi_fs"
+    debug "Found: %s" "$modules_efi_devices"
+    modules_core="$(echo "$modules_core $modules_efi_devices"|uniquify -s)"
+fi
 debug " - modules for %s: %s" "$(basename "$GRUB_CORE_CFG")" "$modules_core"
 
 
@@ -1889,7 +1987,7 @@ if [ "$locale_short" != 'en' ]; then
     locale_dest="$locale_dest_dir/$locale_dest_filename"
     if [ ! -d "$locale_dest_dir" ]; then
         debug "Creating directory '$locale_dest_dir'"
-        mkdir -p 0700 -p "$locale_dest_dir"
+        mkdir -p "$GRUB_EARLY_DIR_MODE" -p "$locale_dest_dir"
     fi
     info "$(__tt "Copying locale '%s'' to '%s'")" "$GRUB_EARLY_LOCALE" "$locale_dest"
     cp "$GRUB_PREFIX/share/locale/${locale_short}/LC_MESSAGES/grub.mo" "$locale_dest"
@@ -1911,7 +2009,7 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
     font_dest="$font_dest_dir/$font_dest_filename"
     if [ ! -d "$font_dest_dir" ]; then
         debug "Creating directory '$font_dest_dir'"
-        mkdir -p 0700 -p "$font_dest_dir"
+        mkdir -p "$GRUB_EARLY_DIR_MODE" -p "$font_dest_dir"
     fi
     info "$(__tt "Copying font '%s' to '%s'")" "$(basename "$font_src" '.pf2')" "$font_dest"
     cp "$font_src" "$font_dest"
@@ -1924,7 +2022,7 @@ if ! bool "$GRUB_EARLY_NO_GFXTERM"; then
 
         info "$(__tt "Creating theme dir '%s'")" "$GRUB_THEMES_DIR"
         # shellcheck disable=SC2174
-        mkdir -m 0700 -p "$GRUB_THEMES_DIR"
+        mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$GRUB_THEMES_DIR"
 
         # processing themes in normal mode or day/night mode
         for s in $var_suffixes; do
@@ -2014,6 +2112,7 @@ done
 # get kernel driver used for each /boot devices
 debug "Getting kernel drivers of /boot devices"
 boot_devices_kernel_drivers=
+# TODO support spaces
 for d in $($GRUB_PROBE -t device /boot); do
     pci_bus="$(get_pci_bus_for_disk_device "$d"|sed 's/^0000://g')"
     driver="$(get_driver_for_pci_device "$pci_bus" "$d")"
@@ -2042,7 +2141,7 @@ debug "Detecting keyboards grub modules"
 if bool "$GRUB_EARLY_NO_USB_KEYBOARD" && bool "$GRUB_EARLY_NO_PS2_KEYBOARD" \
 && [ "$GRUB_EARLY_KEYMAP" != '' ]; then
     fatal_error \
-        "$(__tt "You can't have keymap '%s' and have no PS2 nor USB keyboards")"`
+        "$(__tt "You can't have keymap '%s' and have no PS2 nor USB keyboards")" `
         `"($(__tt "because they are the only one which support keylayouts"))." \
         "$GRUB_EARLY_KEYMAP"
 fi
@@ -2130,7 +2229,7 @@ if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards";
             "$first_incompatible_kbd_name"
         )"
         fatal_error "${err_msg}${NL}$err_desc"
-    
+
     # else, add the disk drivers to the usb keyboard modules (used with nativedisk)
     else
         modules_usb_keyboards="$modules_usb_keyboards $boot_devices_kernel_drivers"
@@ -2178,16 +2277,18 @@ fi
 # grub modules for disks devices
 debug "Getting grub modules for disks devices"
 modules_crypto="$($GRUB_PROBE -t abstraction /boot|uniquify --to-sep-space)"
-modules_disks='biosdisk'
+#modules_disks='biosdisk'
+modules_disks='disk'
 if contains_a_grub_module_that_disable_firmware_driver "$modules_usb_keyboards"; then
     # disable biodisk when using disk drivers
     modules_disks=
-fi 
+fi
 modules_disks="$modules_disks $($GRUB_PROBE -t partmap /boot|sed 's/^/part_/g' \
                                                             |uniquify --to-sep-space)"
 modules_fs="$($GRUB_PROBE -t fs /boot|uniquify --to-sep-space)"
 modules_devices="$modules_crypto $modules_disks $modules_fs"
 debug "Found: %s" "$modules_devices"
+
 
 
 # no custom normal.cfg provided
@@ -2435,7 +2536,7 @@ $(cat "$host_detection_file")
 
     # set the host name
     set hostname=$h
-    
+
     # load host configuration
     if [ -r \$prefix${h_prefix}/$GRUB_HOST_CONFIGURATION_FILENAME ]; then
         insmod configfile
@@ -2652,6 +2753,7 @@ ENDCAT
                 cat >> "$params_host_path" <<ENDCAT
 
 # set terminal background image
+insmod gfxterm_background
 background_image -m stretch "\$prefix${h_prefix}/$(basename "$GRUB_EARLY_TERMINAL_BG_IMAGE")"
 ENDCAT
 
@@ -2829,7 +2931,7 @@ ENDCAT
 
 # if '$h' is detected
 if [ "\$hostname" = "$h" ]; then
-    
+
     # load host menu
     if [ -r \$prefix${h_prefix}/$GRUB_HOST_MENUS_FILENAME ]; then
         insmod configfile
@@ -2978,6 +3080,38 @@ submenu "'"'"$GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE"'"'" $(
 $(for m in $GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK; do echo "insmod $m"; done)"
     fi
 
+    # on disk grub file path
+    grub_on_disk_path="$GRUB_CFG"
+
+    # BTRFS special case
+    if "$GRUB_PROBE" -t fs /boot | grep -q 'btrfs'; then
+        debug "Detected /boot is on a BTRFS filesystem"
+
+        # get /boot devices
+        boot_devices="$("$GRUB_PROBE" -t device /boot)"
+	debug "/boot devices: %s" "$(echo "$boot_devices" | tr '\n' ' ' )"
+        if [ "$boot_devices" != '' ]; then
+
+            # get /boot mount infos
+            boot_mount_subvol=
+            # TODO support spaces
+            for dev in $boot_devices; do
+                boot_mount="$(LC_ALL=C mount | grep "^$dev on / type btrfs " || true)"
+                if [ "$boot_mount" != '' ] && echo "$boot_mount" | grep -q '^.*subvol=\([^,)]\+\).*$'; then
+                    boot_mount_subvol="$(echo "$boot_mount" | sed 's/^.*subvol=\([^,)]\+\).*$/\1/g' || true)"
+                    if ! echo "$boot_mount_subvol" | grep -q '^/'; then
+                        boot_mount_subvol="/$boot_mount_subvol"
+                    fi
+                    debug "Detected /boot is on BTRFS subvolume '%s'" "$boot_mount_subvol"
+                    grub_on_disk_path="${boot_mount_subvol}${grub_on_disk_path}"
+                    debug "Updated grub on disk file path to: '%s'" "$grub_on_disk_path"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    # shellcheck disable=SC2016
     BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
 
 # switching to disk
@@ -2990,11 +3124,11 @@ switch_to_disk
 # to ensure that fonts loaded by grub on disk shell script will be found
 # the prefix must be set to the parent directory of the 'fonts' dir
 # i.e.: the memdisk host directory
-set prefix="'"'"(memdisk)${h_prefix}"'"'"
+set prefix="'"$default_prefix'"${h_prefix}"'"'"
 
 # booting from disk
 msg "'"Switching to grub on disk ..."'"
-source "'"'"$GRUB_CFG"'"'
+source "'"'"$grub_on_disk_path"'"'
     BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY"`
                                  `"$(echo "$BOOT_GRUB_ON_DISK_ENTRY"|indent "$indentation")"
     if ! bool "$GRUB_EARLY_NO_MENU"; then
@@ -3028,7 +3162,7 @@ fi"
         UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY
 }"
     fi
-   
+
     # build the menus file
     indent "$indentation" >> "$menus_host_path" <<ENDCAT
 
@@ -3105,7 +3239,7 @@ if [ "$GRUB_EARLY_ADD_GRUB_MODULES" != '' ]; then
 fi
 
 # modules all merged
-modules="$(echo "$modules_core $GRUB_EARLY_PRELOAD_MODULES $modules_usb_keyboards $modules_confs"`
+modules="$(echo "$modules_core $GRUB_EARLY_PRELOAD_MODULES $modules_usb_keyboards $modules_confs "`
                 `"$modules_grub_cfg $GRUB_EARLY_ADD_GRUB_MODULES" \
           |uniquify -s)"
 debug " - modules (current host): %s" "$modules"
@@ -3171,17 +3305,21 @@ modules_with_deps="$(for m in $modules; do get_grub_module_deps "$m"; echo; done
 debug "Modules (all hosts, with deps): %s" "$modules_with_deps"
 
 # copying required modules to modules dir
-info "$(__tt "Copying required modules to modules dir '%s'")" "$GRUB_EARLY_MODDIR"
-if [ ! -d "$GRUB_EARLY_MODDIR" ]; then
+grub_early_moddir="$GRUB_EARLY_MODDIR_PCBIOS"
+if [ "$opt_efi_dir" != '' ]; then
+    grub_early_moddir="$GRUB_EARLY_MODDIR_EFI"
+fi
+info "$(__tt "Copying required modules to modules dir '%s'")" "$grub_early_moddir"
+if [ ! -d "$grub_early_moddir" ]; then
     # shellcheck disable=SC2174
-    mkdir -m 0700 -p "$GRUB_EARLY_MODDIR"
+    mkdir -m "$GRUB_EARLY_DIR_MODE" -p "$grub_early_moddir"
 fi
 for m in $modules_with_deps; do
     m_path="$GRUB_MODDIR/$m.mod"
     if [ ! -r "$m_path" ]; then
         fatal_error "$(__tt "Module '%s' isn't readable or doesn't exist")" "$m_path"
     fi
-    cp "$m_path" "$GRUB_EARLY_MODDIR"/
+    cp "$m_path" "$grub_early_moddir"/
 done
 
 # in multi-host mode
@@ -3191,7 +3329,7 @@ if bool "$multi_host_mode"; then
 
     # creating a symlink to the modules directory
     for h in $HOST_ID $other_hosts; do
-        link_filename="$(basename "$GRUB_EARLY_MODDIR")"
+        link_filename="$(basename "$grub_early_moddir")"
         link_dest="$GRUB_MEMDISK_DIR/$h/$link_filename"
         if [ -e "$link_dest" ]; then
             rm -f "$link_dest"
@@ -3209,52 +3347,95 @@ if [ -r "$GRUB_EARLY_HOOK_SCRIPT" ]; then
 fi
 
 
-# TODO deduplicate files in memdisk
+# EFI installation
+if [ "$opt_efi_dir" != '' ]; then
 
-
-# create memory disk image
-info "$(__tt "Creating memdisk '%s' from '%s'")" "$GRUB_CORE_MEMDISK" "$GRUB_MEMDISK_DIR"
-# TODO explicitly derefence links?
-tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
-
-
-# create the core.img
-info "$(__tt "Creating core image '%s' ...")" "$GRUB_CORE_IMG"
-debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' "`
-      `"--format '$GRUB_CORE_FORMAT' --compression '$GRUB_CORE_COMPRESSION' "`
-      `"--config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' "`
-      `"$modules_core $GRUB_EARLY_PRELOAD_MODULES"
-# shellcheck disable=SC2086
-"$GRUB_MKIMAGE" \
-    --directory "$GRUB_MODDIR" \
-    --output "$GRUB_CORE_IMG" \
-    --format "$GRUB_CORE_FORMAT" \
-    --compression "$GRUB_CORE_COMPRESSION" \
-    --config "$GRUB_CORE_CFG" \
-    --memdisk "$GRUB_CORE_MEMDISK" \
-    --prefix '(memdisk)' \
-    $modules_core $GRUB_EARLY_PRELOAD_MODULES
-debug "Core image size: %s (max is: %s)" \
-    "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
-
-# ensure 'boot.img' is installed in grub directory
-if [ ! -f "$GRUB_BOOT_IMG" ]; then
-    info "$(__tt "Copying '%s' to '%s'")" "$GRUB_BOOT_IMG_SRC" "$GRUB_BOOT_IMG"
-    cp "$GRUB_BOOT_IMG_SRC" "$GRUB_BOOT_IMG"
-fi
-
-# install grub to disk MBR BIOS
-if ! bool "$opt_noinstall"; then
-    info "$(__tt "Installing grub to MBR BIOS of disk '%s' ...")" "$device"
-    debug "$GRUB_BIOS_SETUP --directory='$GRUB_EARLY_DIR' "'"'"$device"'"'"  $GRUB_INSTALL_ARGS"
+    # create the core.efi
+    info "$(__tt "Creating core image '%s' ...")" "$GRUB_CORE_EFI"
+    debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_EFI' "`
+          `"--format '$GRUB_FORMAT_EFI' --compression '$GRUB_CORE_COMPRESSION' "`
+          `"--config '$GRUB_CORE_CFG' --prefix '' "`
+          `"$modules_core $GRUB_EARLY_PRELOAD_MODULES"
     # shellcheck disable=SC2086
-    "$GRUB_BIOS_SETUP" \
-        --directory="$GRUB_EARLY_DIR" \
-        --device-map="$GRUB_DEVICE_MAP" \
-        "$device" \
-        $GRUB_EARLY_INSTALL_ARGS
+    "$GRUB_MKIMAGE" \
+        --directory "$GRUB_MODDIR" \
+        --output "$GRUB_CORE_EFI" \
+        --format "$GRUB_FORMAT_EFI" \
+        --compression "$GRUB_CORE_COMPRESSION" \
+        --config "$GRUB_CORE_CFG" \
+        --prefix '' \
+        $modules_core $GRUB_EARLY_PRELOAD_MODULES
+    debug "Core image size: %s (max is: %s)" \
+        "$(du -h "$GRUB_CORE_EFI"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
+
+    # install the EFI core image and modules/files
+    if ! bool "$opt_noinstall"; then
+        grub_core_efi_dest_path="$opt_efi_dir/$GRUB_EARLY_CORE_EFI_REL_DEST"
+        grub_core_efi_dest_dir="$(dirname "$grub_core_efi_dest_path")"
+
+        if [ ! -d "$grub_core_efi_dest_dir" ]; then
+            debug "Creating grub core destination directory '%s'" "$grub_core_efi_dest_dir"
+            mkdir -p "$grub_core_efi_dest_dir"
+        fi
+
+        info "$(__tt "Copying memdisk dir '%s' to '%s'")" "$GRUB_MEMDISK_DIR" "$grub_core_efi_dest_dir"
+        cp -r "$GRUB_MEMDISK_DIR"/* "$grub_core_efi_dest_dir"/
+
+        info "$(__tt "Installing grub EFI core image to EFI dir '%s' ...")" "$opt_efi_dir"
+        debug "Copying '%s' to '%s'" "$GRUB_CORE_EFI" "$grub_core_efi_dest_path"
+        cp "$GRUB_CORE_EFI" "$grub_core_efi_dest_path"
+    else
+        warning "$(__tt "Not installing grub EFI core image to EFI dir '%s' (user asked not to)")" "$opt_efi_dir"
+    fi
+
+# not EFI
 else
-    warning "$(__tt "Not installing grub to MBR BIOS of disk '%s' (user asked not to)")" "$device"
+
+    # TODO deduplicate files in memdisk
+
+    # create memory disk image
+    info "$(__tt "Creating memdisk '%s' from '%s'")" "$GRUB_CORE_MEMDISK" "$GRUB_MEMDISK_DIR"
+    # TODO explicitly derefence links?
+    tar -cf "$GRUB_CORE_MEMDISK" -C "$GRUB_MEMDISK_DIR" .
+
+    # create the core.img
+    info "$(__tt "Creating core image '%s' ...")" "$GRUB_CORE_IMG"
+    debug "$GRUB_MKIMAGE --directory "'"'"$GRUB_MODDIR"'"'" --output '$GRUB_CORE_IMG' "`
+          `"--format '$GRUB_FORMAT_PCBIOS' --compression '$GRUB_CORE_COMPRESSION' "`
+          `"--config '$GRUB_CORE_CFG' --memdisk '$GRUB_CORE_MEMDISK' --prefix '(memdisk)' "`
+          `"$modules_core $GRUB_EARLY_PRELOAD_MODULES"
+    # shellcheck disable=SC2086
+    "$GRUB_MKIMAGE" \
+        --directory "$GRUB_MODDIR" \
+        --output "$GRUB_CORE_IMG" \
+        --format "$GRUB_FORMAT_PCBIOS" \
+        --compression "$GRUB_CORE_COMPRESSION" \
+        --config "$GRUB_CORE_CFG" \
+        --memdisk "$GRUB_CORE_MEMDISK" \
+        --prefix "(memdisk)" \
+        $modules_core $GRUB_EARLY_PRELOAD_MODULES
+    debug "Core image size: %s (max is: %s)" \
+        "$(du -h "$GRUB_CORE_IMG"|awk '{print $1}')" "$(( 458240 / 1024 ))K"
+
+    # ensure 'boot.img' is installed in grub directory
+    if [ ! -f "$GRUB_BOOT_IMG" ]; then
+        info "$(__tt "Copying '%s' to '%s'")" "$GRUB_BOOT_IMG_SRC" "$GRUB_BOOT_IMG"
+        cp "$GRUB_BOOT_IMG_SRC" "$GRUB_BOOT_IMG"
+    fi
+
+    # install grub to disk MBR BIOS
+    if ! bool "$opt_noinstall"; then
+        info "$(__tt "Installing grub to MBR BIOS of disk '%s' ...")" "$device"
+        debug "$GRUB_BIOS_SETUP --directory='$GRUB_EARLY_DIR' "'"'"$device"'"'"  $GRUB_INSTALL_ARGS"
+        # shellcheck disable=SC2086
+        "$GRUB_BIOS_SETUP" \
+            --directory="$GRUB_EARLY_DIR" \
+            --device-map="$GRUB_DEVICE_MAP" \
+            "$device" \
+            $GRUB_EARLY_INSTALL_ARGS
+    else
+        warning "$(__tt "Not installing grub to MBR BIOS of disk '%s' (user asked not to)")" "$device"
+    fi
 fi
 
 # done
