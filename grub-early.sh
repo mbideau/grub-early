@@ -175,7 +175,7 @@ GRUB_EARLY_GFXMODE=auto
 GRUB_EARLY_GFXPAYLOAD=keep
 GRUB_EARLY_RANDOM_THEME=false
 GRUB_EARLY_GLOBAL_WRAPPER_CLASSES='default'
-GRUB_EARLY_LOCKED_DISK_MENU_TITLE="$(__tt "Unlock the disk")"
+GRUB_EARLY_LOCKED_DISK_MENU_TITLE="$(__tt "Unlock the disk (%s)")"
 GRUB_EARLY_LOCKED_DISK_MENU_CLASSES='locked,encrypted,key,disk'
 GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE="$(__tt "Boot from disk")"
 GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
@@ -439,6 +439,7 @@ CONFIGURATION
 
     LOCKED_DISK_MENU_TITLE
         The title of the 'disk locked' submenu entry.
+        A single '%s' will be replaced by the drive name (vendor model serial).
         Default to: \`$GRUB_EARLY_LOCKED_DISK_MENU_TITLE'.
 
     LOCKED_DISK_MENU_CLASSES
@@ -1101,9 +1102,8 @@ get_grub_modules_deps_for_line()
 get_top_level_parent_device()
 {
     key="$(if [ "$2" = 'path' ]; then echo 'PATH'; else echo 'NAME'; fi)"
-    toplvldisks=$(lsblk --inverse --ascii --noheading --output "$key" "$1" 2>/dev/null \
-                 |sed 's/^[[:blank:]]*`-//g' \
-                 |cat -s)
+    outmode="$(if [ "$2" = 'path' ]; then echo 'ascii'; else echo 'raw'; fi)"
+    toplvldisks=$(lsblk --output "$key" --noheading "--$outmode" --inverse "$1" 2>/dev/null | cat -s)
     if [ "$toplvldisks" = '' ]; then
         fatal_error \
             "$(__tt "Top level device %s not found for device path '%s' (not a device?)")" \
@@ -1116,6 +1116,29 @@ get_top_level_parent_device()
         echo "$toplvldisks"|tail -n 1
     fi
     return $TRUE
+}
+
+# return the UUID with dash
+get_dash_uuid()
+{
+    if echo "$1"|grep -q '\-'; then
+        echo "$1"
+    else
+        echo "$1"|sed 's/^\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\+\)$/\1-\2-\3-\4-\5/g'
+    fi
+}
+
+# return the partition of the UUID device
+get_partition_from_uuid()
+{
+    blkid --uuid "$(get_dash_uuid "$1")" --output device
+}
+
+# return the name of the drive matching the specified partition
+get_drive_name_from_part()
+{
+    lsblk --output VENDOR,MODEL,SERIAL --ascii --noheading --nodeps \
+        "$(get_top_level_parent_device "$1" 'path')" | sed 's/[ 	]\+/ /g'
 }
 
 # get the PCI bus for the specified device path
@@ -2055,6 +2078,18 @@ debug "Detecting required disk UUIDs to unlock /boot ..."
 boot_required_uuid="$($GRUB_PROBE -t cryptodisk_uuid /boot)"
 debug "Found: %s" "$(echo "$boot_required_uuid"|tr '\n' ','|sed 's/ *, *$//')"
 
+# for each disk UUIDs to unlock /boot, get its Disk name and partition
+debug "Detecting required disk partitions to unlock /boot ..."
+boot_required_uuid_part_drive=
+for uuid in $boot_required_uuid; do
+    uuid_part="$(get_partition_from_uuid "$uuid")"
+    uuid_drive="$(get_drive_name_from_part "$uuid_part")"
+    boot_required_uuid_part_drive="$boot_required_uuid_part_drive
+$uuid | $uuid_part | $uuid_drive"
+done
+boot_required_uuid_part_drive="$(echo "$boot_required_uuid_part_drive"|sed '/^ *$/d')"
+debug "%s" "$(echo "$boot_required_uuid_part_drive" | sed 's/^[^|]*| / - /g')"
+
 # detect required disk UUIDs to define initial root fs
 debug "Detecting required disk UUIDs to define initial root fs ..."
 rootfs_initial_uuid="$($GRUB_PROBE -t arc_hints /boot)"
@@ -2889,16 +2924,18 @@ ENDCAT
 # helper function to detect if disk is unlocked
 function disk_is_unlocked {
     test $(for dev in $($GRUB_PROBE -t baremetal_hints /boot); do
-        printf ' -a -e "(%s)"' "$dev"
-    done | sed 's/^ -a //g'; echo)
+        printf ' -o -e "(%s)"' "$dev"
+    done | sed 's/^ -o //g'; echo)
 }
 
-# helper function to unlock the disk
-function unlock_disk {
+# helper function to unlock a partition from its UUID
+function unlock_part {
     $(for m in $modules_devices; do echo "insmod $m"; done | indent 4)
     $(for uuid in $boot_required_uuid; do
-        echo "cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
-        echo 'msg'
+        echo "if [ "'"'"\$1"'"'" = '$uuid' ]; then"
+        echo "    cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+        echo '    msg'
+        echo 'fi'
     done | indent 4)
 }
 
@@ -3089,7 +3126,7 @@ $(for m in $GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK; do echo "insmod $m"; done)"
 
         # get /boot devices
         boot_devices="$("$GRUB_PROBE" -t device /boot)"
-	debug "/boot devices: %s" "$(echo "$boot_devices" | tr '\n' ' ' )"
+        debug "/boot devices: %s" "$(echo "$boot_devices" | tr '\n' ' ' )"
         if [ "$boot_devices" != '' ]; then
 
             # get /boot mount infos
@@ -3129,38 +3166,72 @@ set prefix="'"$default_prefix'"${h_prefix}"'"'"
 # booting from disk
 msg "'"Switching to grub on disk ..."'"
 source "'"'"$grub_on_disk_path"'"'
-    BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY"`
-                                 `"$(echo "$BOOT_GRUB_ON_DISK_ENTRY"|indent "$indentation")"
+    boot_grub_on_disk_indentation="$indentation"
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        boot_grub_on_disk_indentation="$((indentation + 4))"
+    fi
+    BOOT_GRUB_ON_DISK_MENU_ENTRY=`
+        `"$BOOT_GRUB_ON_DISK_MENU_ENTRY"`
+        `"$(echo "$BOOT_GRUB_ON_DISK_ENTRY"|indent "$boot_grub_on_disk_indentation")"
     if ! bool "$GRUB_EARLY_NO_MENU"; then
         BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY
 }"
     fi
 
     # the unlock disk entry
-    UNLOCK_DISK_MENU_ENTRY=
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-        UNLOCK_DISK_MENU_ENTRY="
-# display menu entry to unlock the disk
-submenu "'"'"$GRUB_EARLY_LOCKED_DISK_MENU_TITLE"'"'" $(
-    get_submenu_classes "$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES") --id "'"locked-disk"'" {
-    $(echo "$GRUB_SUBMENU_THEME"|indent 4)
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)"
+    UNLOCK_DISK_MENU_ENTRIES=
+    if bool "$GRUB_EARLY_NO_MENU"; then
+        part_count=0
+        IFS="$NL"
+        for line in $boot_required_uuid_part_drive; do
+            IFS="$IFS_BAK"
+            part_count="$((part_count + 1))"
+            uuid="$( echo "$line"|awk -F '|' '{print $1}'|trim)"
+            part="$( echo "$line"|awk -F '|' '{print $2}'|trim)"
+            drive="$(echo "$line"|awk -F '|' '{print $3}'|trim)"
+            UNLOCK_DISK_MENU_ENTRIES="$UNLOCK_DISK_MENU_ENTRIES
+
+# disk is still locked
+if ! disk_is_unlocked; then
+
+    # unlocking the partition $part_count '$part' of drive '$drive'
+    unlock_part '$uuid'
+
+    # if unlocking was successful
+    if disk_is_unlocked; then
+        $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 8)
+        $(echo "$EXTRA_MENU_ENTRY"|indent 8)
     fi
-    UNLOCK_DISK_ENTRY="
-
-# unlocking the disk
-unlock_disk
-
-# if unlocking was successful
-if disk_is_unlocked; then
-	$(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 4)
-    $(echo "$EXTRA_MENU_ENTRY"|indent 4)
 fi"
-    UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY"`
-                           `"$(echo "$UNLOCK_DISK_ENTRY"|indent "$indentation")"
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-        UNLOCK_DISK_MENU_ENTRY="$UNLOCK_DISK_MENU_ENTRY
+        done
+    else
+        UNLOCK_DISK_MENU_ENTRIES="
+# display menu entries to unlock the encrypted partitions"
+        part_count=0
+        IFS="$NL"
+        for line in $boot_required_uuid_part_drive; do
+            IFS="$IFS_BAK"
+            part_count="$((part_count + 1))"
+            uuid="$( echo "$line"|awk -F '|' '{print $1}'|trim)"
+            part="$( echo "$line"|awk -F '|' '{print $2}'|trim)"
+            drive="$(echo "$line"|awk -F '|' '{print $3}'|trim)"
+            # shellcheck disable=SC2059
+            UNLOCK_DISK_MENU_ENTRIES="$UNLOCK_DISK_MENU_ENTRIES
+submenu "'"'"$(printf "$GRUB_EARLY_LOCKED_DISK_MENU_TITLE" "$drive")"'"'" $(
+    get_submenu_classes "$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES") --id "'"'"locked-disk-$part_count"'"'" {
+    $(echo "$GRUB_SUBMENU_THEME"|indent 4)
+    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+
+    # unlocking the partition '$part' of drive '$drive'
+    unlock_part '$uuid'
+
+    # if unlocking was successful
+    if disk_is_unlocked; then
+        $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 8)
+        $(echo "$EXTRA_MENU_ENTRY"|indent 8)
+    fi
 }"
+        done
     fi
 
     # build the menus file
@@ -3172,7 +3243,7 @@ if disk_is_unlocked; then
 
 # disk locked
 else
-    $(echo "$UNLOCK_DISK_MENU_ENTRY"|indent 4)
+    $(echo "$UNLOCK_DISK_MENU_ENTRIES"|indent 4)
 fi
 $EXTRA_MENU_ENTRY
 ENDCAT
