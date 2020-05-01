@@ -139,6 +139,7 @@ GRUB_EXTRA_MENUS_FILENAME=menus_extra.cfg
 # theming
 GRUB_THEME_FILENAME=theme.txt
 GRUB_THEME_INNER_FILENAME=theme-inner.txt
+# shellcheck disable=SC2034
 GRUB_THEME_ONDISK_FILENAME=theme-ondisk.txt
 GRUB_THEMES_DIR=$GRUB_MEMDISK_DIR/themes
 GRUB_TERMINAL_BG_IMAGE_DIR=$GRUB_MEMDISK_DIR
@@ -177,7 +178,9 @@ GRUB_EARLY_RANDOM_THEME=false
 GRUB_EARLY_GLOBAL_WRAPPER_CLASSES='default'
 GRUB_EARLY_LOCKED_DISK_MENU_TITLE="$(__tt "Unlock the disk (%s)")"
 GRUB_EARLY_LOCKED_DISK_MENU_CLASSES='locked,encrypted,key,disk'
+# shellcheck disable=SC2034
 GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE="$(__tt "Boot from disk")"
+# shellcheck disable=SC2034
 GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES='unlocked,grub,disk,linux'
 GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES="help minicmd videoinfo reboot halt"
@@ -1923,7 +1926,7 @@ if [ "$GRUB_EARLY_CORE_CFG" = '' ]; then
     if [ "$opt_efi_dir" = '' ]; then
 
         # /!\ comments will be removed because at this stage they are not supported
-        cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+        cat <<ENDCAT | sed '/^[[:blank:]]*#/d' > "$GRUB_CORE_CFG"
 set root="(memdisk)"
 set prefix="(\$root)"
 
@@ -1939,21 +1942,21 @@ ENDCAT
         efi_fs_uuid="$($GRUB_PROBE -t fs_uuid "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g')"
 
         # /!\ comments will be removed because at this stage they are not supported
-        cat > "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
-insmod echo
+        cat <<ENDCAT | sed '/^[[:blank:]]*#/d' > "$GRUB_CORE_CFG"
 insmod search
 search --fs-uuid --no-floppy --set=root $efi_fs_uuid
 
 set prefix="(\$root)/EFI/debian"
 
-echo "root  : \$root"
-echo "prefix: \$prefix"
+#insmod echo
+#echo "root  : \$root"
+#echo "prefix: \$prefix"
 
 ENDCAT
     fi
 
     # /!\ comments will be removed because at this stage they are not supported
-    cat >> "$GRUB_CORE_CFG" <<ENDCAT | sed '/^[[:blank:]]*#/d'
+    cat <<ENDCAT | sed '/^[[:blank:]]*#/d' >> "$GRUB_CORE_CFG"
 set default_prefix="\$prefix"
 
 insmod normal
@@ -2083,8 +2086,8 @@ fi
 
 # detect required disk UUIDs to unlock /boot
 debug "Detecting required disk UUIDs to unlock /boot ..."
-boot_required_uuid="$($GRUB_PROBE -t cryptodisk_uuid /boot)"
-debug "Found: %s" "$(echo "$boot_required_uuid"|tr '\n' ','|sed 's/ *, *$//')"
+boot_required_uuid="$($GRUB_PROBE -t cryptodisk_uuid /boot | tr '\n' ' ' | trim)"
+debug "Found: %s" "$(echo "$boot_required_uuid"|tr ' ' ','|sed 's/,$//')"
 
 # for each disk UUIDs to unlock /boot, get its Disk name and partition
 debug "Detecting required disk partitions to unlock /boot ..."
@@ -2099,14 +2102,30 @@ boot_required_uuid_part_drive="$(echo "$boot_required_uuid_part_drive"|sed '/^ *
 debug "%s" "$(echo "$boot_required_uuid_part_drive" | sed 's/^[^|]*| / - /g')"
 
 # detect required disk UUIDs to define initial root fs
-debug "Detecting required disk UUIDs to define initial root fs ..."
-rootfs_initial_uuid="$($GRUB_PROBE -t arc_hints /boot)"
-debug "Found: %s" "$(echo "$rootfs_initial_uuid"|tr '\n' ','|sed 's/ *, *$//')"
+# ~ debug "Detecting required disk UUIDs to define initial root fs ..."
+rootfs_initial_uuid="$($GRUB_PROBE -t arc_hints /boot | tr '\n' ' ' | trim)"
+# ~ debug "Found: %s" "$(echo "$rootfs_initial_uuid" | tr '  ' ',' | sed 's/,$//')"
+
+# ensure disks UUID matches for hints 'cryptodisk_uuid' and 'arc_hints'
+if [ "$boot_required_uuid" != "$(echo "$rootfs_initial_uuid" | sed 's/cryptouuid\///g')" ]; then
+    fatal_error "Grub hints for disks UUID do not match "`
+                `"(cryptodisk_uuid '%s' != arc_hints '%s')" \
+                "$boot_required_uuid" \
+                "$(echo "$rootfs_initial_uuid" | tr '\n' ' ' | sed 's/cryptouuid\///g')"
+fi
 
 # detect disk UUIDs to search for root fs
-debug "Detecting disk UUIDs to search for root fs ..."
-rootfs_uuid_hints="$($GRUB_PROBE -t baremetal_hints /boot)"
-debug "Found: %s" "$(echo "$rootfs_uuid_hints"|tr '\n' ','|sed 's/ *, *$//')"
+# ~ debug "Detecting disk UUIDs to search for root fs ..."
+rootfs_uuid_hints="$($GRUB_PROBE -t baremetal_hints /boot | tr '\n' ' ' | trim)"
+# ~ debug "Found: %s" "$(echo "$rootfs_uuid_hints" | tr '  ' ',' | sed 's/,$//')"
+
+# ensure disks UUID matches for hints 'cryptodisk_uuid' and 'baremetal_hints'
+if [ "$boot_required_uuid" != "$(echo "$rootfs_uuid_hints" | sed 's/cryptouuid\///g')" ]; then
+    fatal_error "Grub hints for disks UUID do not match "`
+                `"(cryptodisk_uuid '%s' != baremetal_hints '%s')" \
+                "$boot_required_uuid" \
+                "$(echo "$rootfs_uuid_hints" | tr '\n' ' ' | sed 's/cryptouuid\///g')"
+fi
 
 # detect filesystem UUIDs of /boot
 debug "Detecting filesystem UUIDs of /boot ..."
@@ -2926,40 +2945,213 @@ export alternative_config_enabled
 $GRUB_AT_TERMINAL_CONF
 ENDCAT
 
+    # on disk grub file path
+    grub_on_disk_path="$GRUB_CFG"
+
+    # BTRFS special case
+    if "$GRUB_PROBE" -t fs /boot | grep -q 'btrfs'; then
+        debug "Detected /boot is on a BTRFS filesystem"
+
+        # get /boot devices
+        boot_devices="$("$GRUB_PROBE" -t device /boot)"
+        debug "/boot devices: %s" "$(echo "$boot_devices" | tr '\n' ' ' )"
+        if [ "$boot_devices" != '' ]; then
+
+            # get /boot mount infos
+            boot_mount_subvol=
+            # TODO support spaces
+            for dev in $boot_devices; do
+                boot_mount="$(LC_ALL=C mount | grep "^$dev on / type btrfs " || true)"
+                if [ "$boot_mount" != '' ] && echo "$boot_mount" | grep -q '^.*subvol=\([^,)]\+\).*$'; then
+                    boot_mount_subvol="$(echo "$boot_mount" | sed 's/^.*subvol=\([^,)]\+\).*$/\1/g' || true)"
+                    if ! echo "$boot_mount_subvol" | grep -q '^/'; then
+                        boot_mount_subvol="/$boot_mount_subvol"
+                    fi
+                    debug "Detected /boot is on BTRFS subvolume '%s'" "$boot_mount_subvol"
+                    grub_on_disk_path="${boot_mount_subvol}${grub_on_disk_path}"
+                    debug "Updated grub on disk file path to: '%s'" "$grub_on_disk_path"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    boot_grub_on_disk_indentation="$indentation"
+    if ! bool "$GRUB_EARLY_NO_MENU"; then
+        boot_grub_on_disk_indentation="$((indentation + 4))"
+    fi
+
     # function to unlock the disk and one to switch to it
     cat >> "$params_host_path" <<ENDCAT
 
+# vars to help detect when disk is unlocked
+$(
+# shellcheck disable=SC2030
+part_count=0
+for uuid in $boot_required_uuid; do
+    part_count="$((part_count + 1))"
+    echo "set part_unlocked_$part_count=false"
+    echo "export part_unlocked_$part_count"
+done)
+
 # helper function to detect if disk is unlocked
+#  \$1  string  (optional) UUID of an encrypted partition
 function disk_is_unlocked {
-    test $(for dev in $rootfs_uuid_hints; do
-        printf ' -o -e "(%s)"' "$dev"
-    done | sed 's/^ -o //g'; echo)
+    if [ "\$1" = '' ]; then
+        if [ $(
+            # shellcheck disable=SC2030
+            part_count=0
+            for uuid in $boot_required_uuid; do
+                part_count="$((part_count + 1))"
+                # shellcheck disable=SC2016
+                printf ' -a "$part_unlocked_%s" = "true"' "$part_count"
+            done | sed 's/^ -a //g'; echo) ]; then
+            msg "All encrypted partitions are unlocked"
+            return 0
+        fi
+    $(
+        # shellcheck disable=SC2030
+        part_count=0
+        for uuid in $boot_required_uuid; do
+            part_count="$((part_count + 1))"
+            # shellcheck disable=SC2016
+            echo "elif [ "'"'"\$1"'"'" = '$uuid' -a "'"'"\$part_unlocked_$part_count"'"'" = 'true' ]; then"
+            echo "    msg "'"'"Partition '$uuid' is unlocked"'"'
+            echo "    return 0"
+        done|indent 4)
+    fi
+    return 1
 }
 
-# helper function to unlock a partition from its UUID
+# helper function to unlock a partition
+#  \$1  string  UUID of the encrypted partition
 function unlock_part {
     $(for m in $modules_devices; do echo "insmod $m"; done | indent 4)
-    $(for uuid in $boot_required_uuid; do
+    $(
+    # shellcheck disable=SC2030
+    part_count=0
+    for uuid in $boot_required_uuid; do
+        part_count="$((part_count + 1))"
         echo "if [ "'"'"\$1"'"'" = '$uuid' ]; then"
-        echo "    cryptomount -u '$uuid' $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+        echo "    msg 'Unlocking partition $uuid' ..."
+        echo "    if cryptomount -u '$uuid' $GRUB_EARLY_CRYPTOMOUNT_OPTS; then"
+        echo "        set part_unlocked_$part_count=true"
+        echo "        export part_unlocked_$part_count"
+        echo "        msg "'"'"Partition '$uuid' successfully unlocked"'"'
+        echo "    fi"
         echo '    msg'
         echo 'fi'
     done | indent 4)
 }
 
 # helper function to switch to disk
+#  \$1  string  (optional) UUID of an encrypted partition
 function switch_to_disk {
     insmod search
-    if test $(for dev in $rootfs_uuid_hints; do
-        printf ' -a -e "(%s)"' "$dev"
-    done | sed 's/^ -a //g'; echo); then
-        search --no-floppy --fs-uuid --set=root $(for dev in $rootfs_uuid_hints; do
-            echo "--hint='$dev'"
+    if disk_is_unlocked "\$1"; then
+        msg "Searching for root partitions on all unlocked partitions"
+        search --no-floppy --fs-uuid --set=root $(for uuid in $boot_required_uuid; do
+            echo "--hint='cryptouuid/$uuid'"
         done | tr '\n' ' ') '$boot_fs_uuid'
-    $(for dev in $rootfs_uuid_hints; do
-        echo "elif test -e '($dev)'; then"
-        echo "    search --no-floppy --fs-uuid --set=root --hint='$dev' '$boot_fs_uuid'"
+        msg "root is now: '\$root'"
+    $(for uuid in $boot_required_uuid; do
+        echo "elif disk_is_unlocked '$uuid'; then"
+        echo "    msg "'"'"Searching for root partitions in unlocked partition '$uuid'"'"'
+        echo "    search --no-floppy --fs-uuid --set=root --hint='cryptouuid/$uuid' '$boot_fs_uuid'"
+        echo "    msg "'"'"root is now: '\$root'"'"'
     done|indent 4)
+    fi
+}
+
+function switch_to_disk_alt {
+    insmod search
+    search --no-floppy --fs-uuid --set=root '$boot_fs_uuid'
+}
+
+# helper function to boot from disk
+#  \$1  string  (optional) UUID of an encrypted partition
+function boot_from_disk {
+
+    # if disk is unlocked
+    if disk_is_unlocked "\$1"; then
+        $(if [ "$(echo "$GRUB_EARLY_DEFAULT"|sed 's#^.*>##g')" = 'locked-disk' ]; then
+            cat <<ENDSUBCAT
+
+        # set default boot menu entry
+        set default="unlocked-disk"
+ENDSUBCAT
+        fi)
+        $(if [ "$GRUB_EARLY_TIMEOUT" != "" ]; then
+            cat <<ENDSUBCAT
+
+        # set a timeout (to show a progress in gfx mode)
+        set timeout=$GRUB_EARLY_TIMEOUT
+ENDSUBCAT
+        fi)
+        $(if ! bool "$GRUB_EARLY_NO_MENU" && [ "$GRUB_SUBMENU_THEME" != '' ]; then
+            cat <<ENDSUBCAT | indent "$boot_grub_on_disk_indentation"
+
+        # set theme specificaly for grub on disk
+        if [ -r "'"'"\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_ONDISK_FILENAME"'"'" ]; then
+            set theme="'"'"\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_ONDISK_FILENAME"'"'"
+
+        # fallback to default submenu theme
+        else
+            $(echo "$GRUB_SUBMENU_THEME"|indent 12)
+        fi
+ENDSUBCAT
+        fi)
+        $(if ! bool "$GRUB_EARLY_NO_MENU"; then
+            cat <<ENDSUBCAT
+
+        # display menu entry to switch to grub on disk
+        submenu "$GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE" $(
+                get_submenu_classes "$GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES") --id "unlocked-disk" {
+            $(echo "$ondisk_submenu_theme_entry"|indent 12)
+            $(echo "$GRUB_SUBMENU_GFXCONF"|indent 12)
+ENDSUBCAT
+        fi)
+        $(if [ "$GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK" != '' ]; then
+            cat <<ENDSUBCAT | indent "$boot_grub_on_disk_indentation"
+
+        # load grub module before changing \$root and \$prefix
+        $(for m in $GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK; do
+            echo "insmod $m"
+        done | indent 8)
+ENDSUBCAT
+        fi)
+        $(if [ "$GRUB_EARLY_SET_VARS_GRUB_ONDISK" != '' ]; then
+            cat <<ENDSUBCAT | indent "$boot_grub_on_disk_indentation"
+
+        # set vars before switching to grub on disk
+        $(for kv in $GRUB_EARLY_SET_VARS_GRUB_ONDISK; do
+            echo "set $(echo "$kv"|sed 's/^\([^=]\+\)=.*$/\1/g')="'"'"$(echo "$kv"|sed 's/^[^=]\+=\(.*\)$/\1/g')"'"'
+        done | indent 8)
+ENDSUBCAT
+        fi)
+        $(cat <<ENDSUBCAT | indent "$boot_grub_on_disk_indentation"
+
+        # switching to disk
+        switch_to_disk '\$1'
+
+        # not changing prefix here because if we do, modules will be loaded from
+        # the grub on disk, and if the grub on-disk has a different version, some
+        # modules might not work
+
+        # to ensure that fonts loaded by grub on disk shell script will be found
+        # the root must be set to the parent directory of the 'fonts' dir
+        # i.e.: the memdisk host directory
+        set prefix="\$default_prefix${h_prefix}"
+
+        # booting from disk
+        msg "Switching to grub on disk ..."
+        source "$grub_on_disk_path"
+ENDSUBCAT
+        )
+        $(if ! bool "$GRUB_EARLY_NO_MENU"; then
+            echo "}"
+        fi)
+        $(echo "$EXTRA_MENU_ENTRY"|indent 8)
     fi
 }
 ENDCAT
@@ -3095,116 +3287,6 @@ if [ -r "'"'"\$prefix/$GRUB_EXTRA_MENUS_FILENAME"'"'" ]; then
 fi"
     fi
 
-    # boot to grub on disk entry
-    BOOT_GRUB_ON_DISK_MENU_ENTRY="
-$(if [ "$(echo "$GRUB_EARLY_DEFAULT"|sed 's#^.*>##g')" = 'locked-disk' ]; then
-    echo '# set default boot menu entry'
-    echo 'set default="unlocked-disk"'
-fi)
-
-$(if [ "$GRUB_EARLY_TIMEOUT" != "" ]; then
-    echo '# set a timeout (to show a progress in gfx mode)'
-    echo "set timeout=$GRUB_EARLY_TIMEOUT"
-fi)"
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-        ondisk_submenu_theme_entry=
-        if [ "$GRUB_SUBMENU_THEME" != '' ]; then
-            ondisk_submenu_theme_entry="
-# set theme specificaly for grub on disk
-if [ -r "'"'"\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_ONDISK_FILENAME"'"'" ]; then
-    set theme="'"'"\$prefix${h_prefix}/themes/\$theme_name/$GRUB_THEME_ONDISK_FILENAME"'"'"
-
-# fallback to default submenu theme
-else
-    $(echo "$GRUB_SUBMENU_THEME"|indent 4)
-fi"
-        fi
-        BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY
-
-# display menu entry to switch to grub on disk
-submenu "'"'"$GRUB_EARLY_UNLOCKED_DISK_MENU_TITLE"'"'" $(
-    get_submenu_classes "$GRUB_EARLY_UNLOCKED_DISK_MENU_CLASSES") --id "'"unlocked-disk"'" {
-    $(echo "$ondisk_submenu_theme_entry"|indent 4)
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)"
-    fi
-    BOOT_GRUB_ON_DISK_ENTRY=
-    if [ "$GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK" != '' ]; then
-        BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
-
-# load grub module before changing \$root and \$prefix
-$(for m in $GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK; do echo "insmod $m"; done)"
-    fi
-    if [ "$GRUB_EARLY_SET_VARS_GRUB_ONDISK" != '' ]; then
-        # TODO support spaces
-        BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
-
-# set vars before switching to grub on disk
-$(for kv in $GRUB_EARLY_SET_VARS_GRUB_ONDISK; do
-    echo "set $(echo "$kv"|sed 's/^\([^=]\+\)=.*$/\1/g')="'"'"$(echo "$kv"|sed 's/^[^=]\+=\(.*\)$/\1/g')"'"'
-done)"
-    fi
-
-    # on disk grub file path
-    grub_on_disk_path="$GRUB_CFG"
-
-    # BTRFS special case
-    if "$GRUB_PROBE" -t fs /boot | grep -q 'btrfs'; then
-        debug "Detected /boot is on a BTRFS filesystem"
-
-        # get /boot devices
-        boot_devices="$("$GRUB_PROBE" -t device /boot)"
-        debug "/boot devices: %s" "$(echo "$boot_devices" | tr '\n' ' ' )"
-        if [ "$boot_devices" != '' ]; then
-
-            # get /boot mount infos
-            boot_mount_subvol=
-            # TODO support spaces
-            for dev in $boot_devices; do
-                boot_mount="$(LC_ALL=C mount | grep "^$dev on / type btrfs " || true)"
-                if [ "$boot_mount" != '' ] && echo "$boot_mount" | grep -q '^.*subvol=\([^,)]\+\).*$'; then
-                    boot_mount_subvol="$(echo "$boot_mount" | sed 's/^.*subvol=\([^,)]\+\).*$/\1/g' || true)"
-                    if ! echo "$boot_mount_subvol" | grep -q '^/'; then
-                        boot_mount_subvol="/$boot_mount_subvol"
-                    fi
-                    debug "Detected /boot is on BTRFS subvolume '%s'" "$boot_mount_subvol"
-                    grub_on_disk_path="${boot_mount_subvol}${grub_on_disk_path}"
-                    debug "Updated grub on disk file path to: '%s'" "$grub_on_disk_path"
-                    break
-                fi
-            done
-        fi
-    fi
-
-    # shellcheck disable=SC2016
-    BOOT_GRUB_ON_DISK_ENTRY="$BOOT_GRUB_ON_DISK_ENTRY
-
-# switching to disk
-switch_to_disk
-
-# not changing prefix here because if we do, modules will be loaded from
-# the grub on disk, and if the grub on-disk has a different version, some
-# modules might not work
-
-# to ensure that fonts loaded by grub on disk shell script will be found
-# the prefix must be set to the parent directory of the 'fonts' dir
-# i.e.: the memdisk host directory
-set prefix="'"$default_prefix'"${h_prefix}"'"'"
-
-# booting from disk
-msg "'"Switching to grub on disk ..."'"
-source "'"'"$grub_on_disk_path"'"'
-    boot_grub_on_disk_indentation="$indentation"
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-        boot_grub_on_disk_indentation="$((indentation + 4))"
-    fi
-    BOOT_GRUB_ON_DISK_MENU_ENTRY=`
-        `"$BOOT_GRUB_ON_DISK_MENU_ENTRY"`
-        `"$(echo "$BOOT_GRUB_ON_DISK_ENTRY"|indent "$boot_grub_on_disk_indentation")"
-    if ! bool "$GRUB_EARLY_NO_MENU"; then
-        BOOT_GRUB_ON_DISK_MENU_ENTRY="$BOOT_GRUB_ON_DISK_MENU_ENTRY
-}"
-    fi
-
     # the unlock disk entry
     UNLOCK_DISK_MENU_ENTRIES=
     if bool "$GRUB_EARLY_NO_MENU"; then
@@ -3219,16 +3301,13 @@ source "'"'"$grub_on_disk_path"'"'
             UNLOCK_DISK_MENU_ENTRIES="$UNLOCK_DISK_MENU_ENTRIES
 
 # disk is still locked
-if ! disk_is_unlocked; then
+if ! disk_is_unlocked '$uuid'; then
 
     # unlocking the partition $part_count '$part' of drive '$drive'
     unlock_part '$uuid'
 
-    # if unlocking was successful
-    if disk_is_unlocked; then
-        $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 8)
-        $(echo "$EXTRA_MENU_ENTRY"|indent 8)
-    fi
+    # try to boot from disk
+    boot_from_disk '$uuid'
 fi"
         done
     else
@@ -3244,20 +3323,19 @@ fi"
             drive="$(echo "$line"|awk -F '|' '{print $3}'|trim)"
             # shellcheck disable=SC2059
             UNLOCK_DISK_MENU_ENTRIES="$UNLOCK_DISK_MENU_ENTRIES
-submenu "'"'"$(printf "$GRUB_EARLY_LOCKED_DISK_MENU_TITLE" "$drive")"'"'" $(
-    get_submenu_classes "$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES") --id "'"'"locked-disk-$part_count"'"'" {
-    $(echo "$GRUB_SUBMENU_THEME"|indent 4)
-    $(echo "$GRUB_SUBMENU_GFXCONF"|indent 4)
+if ! disk_is_unlocked '$uuid'; then
+    submenu "'"'"$(printf "$GRUB_EARLY_LOCKED_DISK_MENU_TITLE" "$drive")"'"'" $(
+        get_submenu_classes "$GRUB_EARLY_LOCKED_DISK_MENU_CLASSES") --id "'"'"locked-disk-$part_count"'"'" {
+        $(echo "$GRUB_SUBMENU_THEME"|indent 8)
+        $(echo "$GRUB_SUBMENU_GFXCONF"|indent 8)
 
-    # unlocking the partition '$part' of drive '$drive'
-    unlock_part '$uuid'
+        # unlocking the partition '$part' of drive '$drive'
+        unlock_part '$uuid'
 
-    # if unlocking was successful
-    if disk_is_unlocked; then
-        $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 8)
-        $(echo "$EXTRA_MENU_ENTRY"|indent 8)
-    fi
-}"
+        # try to boot from disk
+        boot_from_disk '$uuid'
+    }
+fi"
         done
     fi
 
@@ -3265,8 +3343,10 @@ submenu "'"'"$(printf "$GRUB_EARLY_LOCKED_DISK_MENU_TITLE" "$drive")"'"'" $(
     indent "$indentation" >> "$menus_host_path" <<ENDCAT
 
 # disk is unlocked
-if disk_is_unlocked; then
-    $(echo "$BOOT_GRUB_ON_DISK_MENU_ENTRY"|indent 4)
+if disk_is_unlocked ''; then
+
+    # try to boot from disk
+    boot_from_disk ''
 
 # disk locked
 else
