@@ -2105,7 +2105,7 @@ debug "Found: %s" "$(echo "$rootfs_initial_uuid"|tr '\n' ','|sed 's/ *, *$//')"
 
 # detect disk UUIDs to search for root fs
 debug "Detecting disk UUIDs to search for root fs ..."
-rootfs_uuid_hints="$($GRUB_PROBE -t hints_string /boot)"
+rootfs_uuid_hints="$($GRUB_PROBE -t baremetal_hints /boot)"
 debug "Found: %s" "$(echo "$rootfs_uuid_hints"|tr '\n' ','|sed 's/ *, *$//')"
 
 # detect filesystem UUIDs of /boot
@@ -2931,7 +2931,7 @@ ENDCAT
 
 # helper function to detect if disk is unlocked
 function disk_is_unlocked {
-    test $(for dev in $($GRUB_PROBE -t baremetal_hints /boot); do
+    test $(for dev in $rootfs_uuid_hints; do
         printf ' -o -e "(%s)"' "$dev"
     done | sed 's/^ -o //g'; echo)
 }
@@ -2941,7 +2941,7 @@ function unlock_part {
     $(for m in $modules_devices; do echo "insmod $m"; done | indent 4)
     $(for uuid in $boot_required_uuid; do
         echo "if [ "'"'"\$1"'"'" = '$uuid' ]; then"
-        echo "    cryptomount -u $uuid $GRUB_EARLY_CRYPTOMOUNT_OPTS"
+        echo "    cryptomount -u '$uuid' $GRUB_EARLY_CRYPTOMOUNT_OPTS"
         echo '    msg'
         echo 'fi'
     done | indent 4)
@@ -2950,7 +2950,17 @@ function unlock_part {
 # helper function to switch to disk
 function switch_to_disk {
     insmod search
-    search --no-floppy --fs-uuid --set=root $rootfs_uuid_hints $boot_fs_uuid
+    if test $(for dev in $rootfs_uuid_hints; do
+        printf ' -a -e "(%s)"' "$dev"
+    done | sed 's/^ -a //g'; echo); then
+        search --no-floppy --fs-uuid --set=root $(for dev in $rootfs_uuid_hints; do
+            echo "--hint='$dev'"
+        done | tr '\n' ' ') '$boot_fs_uuid'
+    $(for dev in $rootfs_uuid_hints; do
+        echo "elif test -e '($dev)'; then"
+        echo "    search --no-floppy --fs-uuid --set=root --hint='$dev' '$boot_fs_uuid'"
+    done|indent 4)
+    fi
 }
 ENDCAT
 
