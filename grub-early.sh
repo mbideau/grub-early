@@ -186,7 +186,8 @@ GRUB_EARLY_PARSE_OTHER_HOSTS_CONFS=true
 GRUB_EARLY_PRELOAD_MODULES="help minicmd videoinfo reboot halt"
 GRUB_EARLY_PRELOAD_MODULES_GRUB_ONDISK='echo linux configfile'
 GRUB_EARLY_SET_VARS_GRUB_ONDISK="feature_default_font_path=y"
-GRUB_EARLY_CORE_EFI_REL_DEST=EFI/debian/grubx64.efi
+GRUB_EARLY_EFI_VENDOR="$(lsb_release -i -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo 'debian')"
+GRUB_EARLY_EFI_BOOTFILE=grubx64.efi
 
 # internal const
 NL="
@@ -218,7 +219,7 @@ USAGE
         Display help
 
     $THIS_SCRIPT_NAME --efi-dir /mnt/efi
-        Create and install core.efi to /mnt/efi/EFI/debian/grubx64.efi.
+        Create and install core.efi to /mnt/efi/EFI/$GRUB_EARLY_EFI_VENDOR/$GRUB_EARLY_EFI_BOOTFILE.
 
     $THIS_SCRIPT_NAME [-c|--config FILE] [-v|--verbosity LEVEL] DEVICE
         Create and install core.img to specified device.
@@ -335,6 +336,14 @@ CONFIGURATION
         Path to a mounted EFI partition directory.
         Force the EFI format for grub core image.
         Default to: \`$GRUB_EARLY_EFI_DIR'.
+
+    EFI_VENDOR
+        Name (lowercase) of the EFI vendor that contains the main EFI boot entry.
+        Default to: \`$GRUB_EARLY_EFI_VENDOR'.
+
+    EFI_BOOTFILE
+        File name of the main EFI boot entry file.
+        Default to: \`$GRUB_EARLY_EFI_BOOTFILE'.
 
     CORE_CFG
         Use a custom configuration script for early grub instead of the default
@@ -1915,13 +1924,6 @@ fi
 # no custom core.cfg provided
 if [ "$GRUB_EARLY_CORE_CFG" = '' ]; then
 
-# echo ""
-# echo "Devices detected:"
-# ls
-# echo ""
-# echo "Hit enter to continue grub-shell script ..."
-# read cont
-
     # PC BIOS setup needs to have its prefix set to (memdisk)
     if [ "$opt_efi_dir" = '' ]; then
 
@@ -1937,8 +1939,6 @@ ENDCAT
     # EFI setup
     else
 
-        #default_root="($($GRUB_PROBE -t baremetal_hints "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g'))"
-        #default_root="($($GRUB_PROBE -t compatibility_hint "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g'))"
         efi_fs_uuid="$($GRUB_PROBE -t fs_uuid "$opt_efi_dir"|sed 's/^ *//g;s/ *$//g')"
 
         # /!\ comments will be removed because at this stage they are not supported
@@ -1946,11 +1946,7 @@ ENDCAT
 insmod search
 search --fs-uuid --no-floppy --set=root $efi_fs_uuid
 
-set prefix="(\$root)/EFI/debian"
-
-#insmod echo
-#echo "root  : \$root"
-#echo "prefix: \$prefix"
+set prefix="(\$root)/EFI/$GRUB_EARLY_EFI_VENDOR"
 
 ENDCAT
     fi
@@ -3548,7 +3544,8 @@ if [ "$opt_efi_dir" != '' ]; then
 
     # install the EFI core image and modules/files
     if ! bool "$opt_noinstall"; then
-        grub_core_efi_dest_path="$opt_efi_dir/$GRUB_EARLY_CORE_EFI_REL_DEST"
+        grub_core_efi_rel_dest="EFI/$GRUB_EARLY_EFI_VENDOR/$GRUB_EARLY_EFI_BOOTFILE"
+        grub_core_efi_dest_path="$opt_efi_dir/$grub_core_efi_rel_dest"
         grub_core_efi_dest_dir="$(dirname "$grub_core_efi_dest_path")"
 
         if [ ! -d "$grub_core_efi_dest_dir" ]; then
